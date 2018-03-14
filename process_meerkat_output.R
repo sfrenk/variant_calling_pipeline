@@ -8,8 +8,6 @@ parser$add_argument("-o", "--output", help = "output filename", default = "meerk
 args <- parser$parse_args()
 
 # Read in unfiltered transposon insertion data
-#setwd("/home/sfrenk/Documents/Projects_sup/braxton_paper/meerkat")
-#file_list <-  c("TRT1_2.variants", "EXO1_A.variants")
 
 # Compile df
 print("Reading and compiling data...")
@@ -43,8 +41,25 @@ idx <- 1
 for (i in 1:nrow(vars)) {
     
     name <- vars[i, "sample"]
-    match <- unique_vars %>% filter(type == vars[i, "type"], chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100)
+    
+    # Need to process insertions and interchromosomal translocations differently from other events - need to take into account donor as well as event locus
+    if (grepl("ins", vars[i, "type"])){
+        
+        match <- unique_vars %>% filter(type == vars[i, "type"])
+        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, opt1 == vars[i, "opt1"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < 100, abs(as.numeric(opt3) - as.numeric(vars[i, "opt3"])) < 100)
+        
+        
+    } else if (vars[i, "type"] == "transl_inter"){
+        # Interchromsomal translations are missing the "size" column, so the features are shifted forward by one column
 
+        match <- unique_vars %>% filter(type == vars[i, "type"]) 
+        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, size == vars[i, "size"], abs(as.numeric(opt1) - as.numeric(vars[i, "opt1"])) < 100, abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < 100)
+        
+    } else{
+        
+        match <- unique_vars %>% filter(type == vars[i, "type"], chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100)
+        
+    }
     if (nrow(match) == 0) {
         
         # If the variant is new, create a new entry for the genotype table
@@ -64,6 +79,8 @@ for (i in 1:nrow(vars)) {
     
 }
 
-unique_vars <- unique_vars[!is.na(unique_vars),]
+
+print("Writing output...")
+unique_vars <- unique_vars[complete.cases(unique_vars),]
 
 write.table(unique_vars, args$output, col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")

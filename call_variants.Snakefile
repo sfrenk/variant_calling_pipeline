@@ -7,7 +7,7 @@ import sys
 # Call Variants using GATK
 
 # Required modules:
-#	bbmap bwa samtools picard gatk
+#	python bbmap bwa samtools gatk picard vcftools r perl bedtools
 
 
 ##########################	NOTES	########################################
@@ -16,45 +16,63 @@ import sys
 
 # Base recalibration is currently not supported, so keep BASE_RECALIBRATION = False. I need to get a vcf file of known mutations in our lab strains.
 
-############################	VARIABLES	################################
-
-# Picard jar location
-PICARD = "/nas/longleaf/apps/picard/2.2.4/picard-tools-2.2.4/picard.jar"
-# Picard reference dict for genome
-REF_DICT = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/genome.dict"
-
-# snpEff directory
-SNPEFF = "/nas/longleaf/home/sfrenk/local/src/snpEff/"
-
-# Meerkat scripts directory
-MEERKAT_SCRIPTS = "/nas/longleaf/home/sfrenk/local/Meerkat/scripts/"
-# Meerkat genome directory
-MEERKAT_GENOME = "/nas/longleaf/home/sfrenk/local/Meerkat/genomes/WS251"
-
-# Directory containing samtools version 0.1.19
-# Annoyingly, Meerkat requires this old version of samtools, but I want to keep the most recent samtools version in my PATH
-SAMTOOLS_OLD = "/nas/longleaf/home/sfrenk/local/samtools/0.1.19/"
-
-# genomeSTRIP directory
-STRIP_DIR = "/nas/longleaf/home/sfrenk/software/svtoolkit"
-
 ############################    PARAMETERS    ##############################
 
 # Input parameters
 BASEDIR = "fastq2"
 EXTENSION = ".fastq.gz"
 PAIRED = True
-
-# Trimming parameters
-ADAPTERS="/nas/longleaf/apps/bbmap/37.62/bbmap/resources/adapters.fa"
-
-# Mapping parameters
-BWA_INDEX = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/bwa/genome"
-
-# Variant calling parameters
-REF = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/genome.fa"
 PROJECT_NAME = "cohort"
-CALL_STRUCTURAL_VARIANTS = True
+
+# Remove items from the list below if you do not want the corresponding analysis to be performed
+OPTIONS_LIST = ["snps_indels", "structural_variants", "tandem_repeat_copy_number", "transposons", "telomere_recombination"]
+
+############################	VARIABLES	################################
+
+
+#### Mapping and SNPs/indels ####
+
+# Sequences of adapters to be trimmed
+ADAPTERS="/nas/longleaf/apps/bbmap/37.62/bbmap/resources/adapters.fa"
+# Fasta reference
+REF = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/genome.fa"
+# BWA index
+BWA_INDEX = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/bwa/genome"
+# Directory containing sample_vcf.sh and process_meerkat_output.R
+UTILS_DIR = "/nas/longleaf/home/sfrenk/pipelines/variant_calling"
+# Picard jar location
+PICARD = "/nas/longleaf/apps/picard/2.2.4/picard-tools-2.2.4/picard.jar"
+# Picard reference dict for genome
+REF_DICT = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/genome.dict"
+# snpEff directory
+SNPEFF = "/nas/longleaf/home/sfrenk/local/src/snpEff/"
+
+#### Structural Variants ####
+
+# Meerkat scripts directory
+MEERKAT_SCRIPTS = "/nas/longleaf/home/sfrenk/local/Meerkat/scripts/"
+# Meerkat genome directory
+MEERKAT_GENOME = "/nas/longleaf/home/sfrenk/local/Meerkat/genomes/WS251"
+# Directory containing samtools version 0.1.19
+# Annoyingly, Meerkat requires this old version of samtools, but I want to keep the most recent samtools version in my PATH
+SAMTOOLS_OLD = "/nas/longleaf/home/sfrenk/local/samtools/0.1.19/"
+
+#### Copy Number ####
+
+# Tandem repeat loci gtf file
+REPEATS_GTF = "repeats.gtf"
+
+#### Transposons ####
+
+# jitterbug directory
+JITTERBUG_DIR = "/proj/ahmedlab/steve/Software/jitterbug/"
+# GTF/GFF3 file containing all known transposon insertions in the genome
+TRANSPOSONS_GTF = "/proj/ahmedlab/steve/seq/transposons/ce11_rebpase/ce11_transposons.gff3"
+
+#### Telomere mates ####
+
+# Telomere coordinates bed file
+TELOMERE_BED = "/nas/longleaf/home/sfrenk/proj/seq/telomere/telomeres.bed"
 
 ###############################################################################
 
@@ -72,15 +90,13 @@ GVCF_LIST2 = " ".join([ "-V vcf_2/" + x + ".g.vcf" for x in SAMPLES ])
 if len(SAMPLES) == 0:
 	sys.exit("ERROR: no samples in base directory!")
 
-if CALL_STRUCTURAL_VARIANTS == True:
-	rule all:
-		input:
-			expand("meerkat/{sample}/{sample}.variants.af", sample = SAMPLES)
-			#expand("meerkat/{sample}/{sample}.variants", sample = SAMPLES)
-else:
-	rule all:
-		input:
-			"final/" + PROJECT_NAME + ".variants.ano.vcf"
+# Identify target output file(s)
+output_files = {"snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants" : "final/" + PROJECT_NAME + ".structural.txt", "tandem_repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : expand("telomere_recombination/{sample}.bam.bg", sample = SAMPLES)}
+
+
+rule all:
+	input:
+		[ output_files[x] for x in OPTIONS_LIST ]
 
 ###############################################################################
 
@@ -181,7 +197,7 @@ rule mark_duplicates:
 	log:
 		"logs/{sample}_mark_duplicates.log"
 	shell:
-		"java -jar {params.picard} MarkDuplicates INPUT={input.bamfile} OUTPUT={output.bam_out} METRICS_FILE={output.metrics} ASSUME_SORTED=true 2> {log}"
+		"java -jar {params.picard} MarkDuplicates INPUT={input.bamfile} OUTPUT={output.bam_out} METRICS_FILE={output.metrics} ASSUME_SORTED=true REMOVE_DUPLICATES=true 2> {log}"
 
 rule index_mrkdp_bam:
 	input:
@@ -356,8 +372,10 @@ rule get_snp_training_set:
 		snps_training_file = "recal/training_snps.vcf",
 	log:
 		"logs/get_snp_training_set.log"
+	params:
+		utils_dir = UTILS_DIR
 	shell:
-		"sample_vcf -v {input} -o {output} 2> {log}"
+		"bash {params.utils_dir}/sample_vcf.sh -v {input} -o {output} 2> {log}"
 
 rule get_indel_training_set:
 	input:
@@ -478,78 +496,158 @@ rule combine_variants:
 
 #### Structural Variant calling ####
 
-rule symlink_bam:
-	input:
-		bamfile = "mrkdp/{sample}.bam",
-		bamidx = "mrkdp/{sample}.bam.bai"
-	output:
-		bamfile = "meerkat/{sample}/{sample}.bam",
-		bamidx = "meerkat/{sample}/{sample}.bam.bai"
-	run:
-		shell("ln -s ../../{input.bamfile} {output.bamfile}")
-		shell("ln -s ../../{input.bamidx} {output.bamidx}")
+if "structural_variants" in OPTIONS_LIST:
+	rule symlink_bam:
+		input:
+			bamfile = "mrkdp/{sample}.bam",
+			bamidx = "mrkdp/{sample}.bam.bai"
+		output:
+			bamfile = "meerkat/{sample}/{sample}.bam",
+			bamidx = "meerkat/{sample}/{sample}.bam.bai"
+		run:
+			shell("ln -s ../../{input.bamfile} {output.bamfile}")
+			shell("ln -s ../../{input.bamidx} {output.bamidx}")
 
-rule meerkat_pre_process:
-	input:
-		"meerkat/{sample}/{sample}.bam"
-	output:
-		preproc_log = "meerkat/{sample}/{sample}.pre.log",
-		isinfo = "meerkat/{sample}/{sample}.isinfo"
-	params:
-		meerkat_scripts = MEERKAT_SCRIPTS,
-		samtools_old = SAMTOOLS_OLD
-	log:
-		"logs/{sample}_meerkat_pre_process.log"
-	shell:
-		"perl {params.meerkat_scripts}/pre_process.pl -S {params.samtools_old} -s 20 -k 1500 -q 15 -l 0 -b {input} 2> {log}"
+	rule meerkat_pre_process:
+		input:
+			"meerkat/{sample}/{sample}.bam"
+		output:
+			preproc_log = "meerkat/{sample}/{sample}.pre.log",
+			isinfo = "meerkat/{sample}/{sample}.isinfo"
+		params:
+			meerkat_scripts = MEERKAT_SCRIPTS,
+			samtools_old = SAMTOOLS_OLD
+		log:
+			"logs/{sample}_meerkat_pre_process.log"
+		shell:
+			"perl {params.meerkat_scripts}/pre_process.pl -S {params.samtools_old} -s 20 -k 1500 -q 15 -l 0 -b {input} 2> {log}"
 
-rule run_meerkat:
-	input:
-		bamfile = "meerkat/{sample}/{sample}.bam",
-		preproc_log = "meerkat/{sample}/{sample}.pre.log"
-	output:
-		meerkat_bam = "meerkat/{sample}/{sample}.sr.bam",
-		cluster_file = "meerkat/{sample}/{sample}.clusters"
-	threads:
-		8
-	params:
-		meerkat_scripts = MEERKAT_SCRIPTS,
-		meerkat_genome = MEERKAT_GENOME,
-		samtools_old = SAMTOOLS_OLD
-	log:
-		"logs/{sample}_run_meerkat.log"
-	shell:
-		"perl {params.meerkat_scripts}/meerkat.pl -S {params.samtools_old} -s 20 -d 5 -p 3 -o 1 -m 0 -l 0 -t {threads} -F {params.meerkat_genome}/fasta -b {input.bamfile} 2> {log}"
+	rule run_meerkat:
+		input:
+			bamfile = "meerkat/{sample}/{sample}.bam",
+			preproc_log = "meerkat/{sample}/{sample}.pre.log"
+		output:
+			meerkat_bam = "meerkat/{sample}/{sample}.sr.bam",
+			cluster_file = "meerkat/{sample}/{sample}.clusters"
+		threads:
+			8
+		params:
+			meerkat_scripts = MEERKAT_SCRIPTS,
+			meerkat_genome = MEERKAT_GENOME,
+			samtools_old = SAMTOOLS_OLD
+		log:
+			"logs/{sample}_run_meerkat.log"
+		shell:
+			"perl {params.meerkat_scripts}/meerkat.pl -S {params.samtools_old} -s 20 -d 5 -p 3 -o 1 -m 0 -l 0 -t {threads} -F {params.meerkat_genome}/fasta -b {input.bamfile} 2> {log}"
 
-rule meerkat_mechanism:
-	input:
-		bamfile = "meerkat/{sample}/{sample}.bam",
-		meerkat_bam = "meerkat/{sample}/{sample}.sr.bam"
-	output:
-		"meerkat/{sample}/{sample}.variants"
-	params:
-		meerkat_scripts = MEERKAT_SCRIPTS,
-		meerkat_genome = MEERKAT_GENOME
-	log:
-		"logs/{sample}_meerkat_mechanism.log"
-	shell:
-		"perl {params.meerkat_scripts}/mechanism.pl -R {params.meerkat_genome}/*_rmsk.txt -b {input.bamfile} 2> {log}"
+	rule meerkat_mechanism:
+		input:
+			bamfile = "meerkat/{sample}/{sample}.bam",
+			meerkat_bam = "meerkat/{sample}/{sample}.sr.bam"
+		output:
+			"meerkat/{sample}/{sample}.variants"
+		params:
+			meerkat_scripts = MEERKAT_SCRIPTS,
+			meerkat_genome = MEERKAT_GENOME
+		log:
+			"logs/{sample}_meerkat_mechanism.log"
+		shell:
+			"perl {params.meerkat_scripts}/mechanism.pl -R {params.meerkat_genome}/*_rmsk.txt -b {input.bamfile} 2> {log}"
 
-# Calculate allele frequency (zygosity) of structural variants
-rule calc_af:
-	input:
-		var_file = "meerkat/{sample}/{sample}.variants",
-		bamfile = "meerkat/{sample}/{sample}.bam",
-		bamidx = "meerkat/{sample}/{sample}.bam.bai",
-		cluster_file = "meerkat/{sample}/{sample}.clusters",
-		isinfo = "meerkat/{sample}/{sample}.isinfo"
-	output:
-		"meerkat/{sample}/{sample}.variants.af"
-	params:
-		meerkat_scripts = MEERKAT_SCRIPTS,
-		samtools_old = SAMTOOLS_OLD
-	log:
-		"logs/{sample}_meerkat_af.log"
-	shell:
-		"perl {params.meerkat_scripts}/discon.pl -i {input.var_file} -o {output} -B {input.bamfile} -C {input.cluster_file} -I {input.isinfo} -S {params.samtools_old} 2> {log}"
+	# Combine meekat output into one VCF-style file
+	rule compile_meerkat:
+		input:
+			expand("meerkat/{sample}/{sample}.variants", sample = SAMPLES)
+		output:
+			"final/" + PROJECT_NAME + ".structural.txt" 
+		params:
+			meerkat_scripts = MEERKAT_SCRIPTS,
+			samtools_old = SAMTOOLS_OLD,
+			utils_dir = UTILS_DIR
+		log:
+			"logs/meerkat_compile.log"
+		shell:
+			"Rscript {params.utils_dir}/process_meerkat_output.R -o {output} {input} 2> {log}"
 
+#### Telomere/rDNA length analysis ####
+
+# Note that pre-duplicate marked files are used here.
+
+if "tandem_repeat_copy_number" in OPTIONS_LIST:
+	rule tandem_repeat_copy_number:
+		input:
+			bamfile = "bam/{sample}.bam",
+			bamidx = "bam/{sample}.bam.bai"
+		output:
+			"repeats/{sample}_repeats.txt"
+		params:
+			utils_dir = UTILS_DIR,
+			repeats_gtf = REPEATS_GTF
+		log:
+			"logs/{sample}_copy_number.log"
+		shell:
+			"python3 {params.utils_dir}/calculate_repeat_copy_number.py -g {params.repeats_gtf} -l -o {output} {input.bamfile} 2> {log}"
+
+#### Transposons ####
+
+if "transposons" in OPTIONS_LIST:
+	rule find_transposon_insertions:
+		input:
+			bamfile = "mrkdp/{sample}.bam",
+			bamidx = "mrkdp/{sample}.bam.bai"
+		output:
+			"transposons/{sample}/{sample}.TE_insertions_paired_clusters.gff3"
+		params:
+			jitterbug_dir = JITTERBUG_DIR,
+			transposons_gtf = TRANSPOSONS_GTF,
+			sample_name = "{sample}"
+		threads:
+			4
+		log:
+			"logs/{sample}_transposon_insertions.log"
+		shell:
+			"module load python/2.7.12; "
+			"python {params.jitterbug_dir}/jitterbug.py --pre_filter -l {params.sample_name} -n {threads} -o transposons/{params.sample_name}/{params.sample_name} {input.bamfile} {params.transposons_gtf} 2> {log}"
+
+	rule jitterbug_filter:
+		input:
+			expand("transposons/{sample}/{sample}.TE_insertions_paired_clusters.gff3", sample = SAMPLES)
+		output:
+			"transposons/" + PROJECT_NAME + ".all.transposons.txt"
+		params:
+			utils_dir = UTILS_DIR
+		log:
+			"logs/jitterbug_filter.log"
+		shell:
+			"python3 {params.utils_dir}/jitterbug_filter.py -o {output} {input} &> {log}"
+
+	rule jitterbug_genotype:
+		input:
+			"transposons/" + PROJECT_NAME + ".all.transposons.txt"
+		output:
+			"final/" + PROJECT_NAME + ".transposons.txt"
+		params:
+			utils_dir = UTILS_DIR
+		log:
+			"logs/jitterbug_genotype.log"
+		shell:
+			"Rscript {params.utils_dir}/jitterbug_genotype.R -o {output} {input} &> {log}"
+
+
+#### Telomere recombination ####
+
+if "telomere_recombination" in OPTIONS_LIST:
+	rule telomere_recombination:
+		input:
+			bamfile = "mrkdp/{sample}.bam",
+			bamidx = "mrkdp/{sample}.bam.bai"
+		output:
+			"telomere_recombination/{sample}.bam.bg"
+		params:
+			utils_dir = UTILS_DIR,
+			output_base = "telomere_recombination/{sample}.bam",
+			telomere_bed = TELOMERE_BED
+		log:
+			"logs/{sample}_telomere_recombination.log"
+		shell:
+			"python3 {params.utils_dir}/telomere_mates.py -o {params.output_base} -t {params.telomere_bed} -q 20 {input.bamfile} &> {log}"
