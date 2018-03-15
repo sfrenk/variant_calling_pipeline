@@ -29,6 +29,8 @@ OPTIONS_LIST = ["snps_indels", "structural_variants", "tandem_repeat_copy_number
 
 ############################	VARIABLES	################################
 
+# Directory containing utilities for this pipeline
+UTILS_DIR = "/nas/longleaf/home/sfrenk/pipelines/variant_calling"
 
 #### Mapping and SNPs/indels ####
 
@@ -38,8 +40,6 @@ ADAPTERS="/nas/longleaf/apps/bbmap/37.62/bbmap/resources/adapters.fa"
 REF = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/genome.fa"
 # BWA index
 BWA_INDEX = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/bwa/genome"
-# Directory containing sample_vcf.sh and process_meerkat_output.R
-UTILS_DIR = "/nas/longleaf/home/sfrenk/pipelines/variant_calling"
 # Picard jar location
 PICARD = "/nas/longleaf/apps/picard/2.2.4/picard-tools-2.2.4/picard.jar"
 # Picard reference dict for genome
