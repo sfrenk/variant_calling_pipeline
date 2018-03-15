@@ -25,12 +25,13 @@ PAIRED = True
 PROJECT_NAME = "cohort"
 
 # Remove items from the list below if you do not want the corresponding analysis to be performed
-OPTIONS_LIST = ["snps_indels", "structural_variants", "tandem_repeat_copy_number", "transposons", "telomere_recombination"]
+OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants", "repeat_copy_number", "transposons", "telomere_recombination"]
 
 ############################	VARIABLES	################################
 
 # Directory containing utilities for this pipeline
 UTILS_DIR = "/nas/longleaf/home/sfrenk/pipelines/variant_calling"
+
 
 #### Mapping and SNPs/indels ####
 
@@ -91,7 +92,7 @@ if len(SAMPLES) == 0:
 	sys.exit("ERROR: no samples in base directory!")
 
 # Identify target output file(s)
-output_files = {"snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants" : "final/" + PROJECT_NAME + ".structural.txt", "tandem_repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : expand("telomere_recombination/{sample}.bam.bg", sample = SAMPLES)}
+output_files = {"coverage" : expand("coverage/{sample}_coverage.txt", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants" : "final/" + PROJECT_NAME + ".structural.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : expand("telomere_recombination/{sample}.bam.bg", sample = SAMPLES)}
 
 
 rule all:
@@ -207,6 +208,22 @@ rule index_mrkdp_bam:
 	shell:
 		"samtools index {input}"
 
+
+#### Coverage ####
+
+rule calculate_coverage:
+	input:
+		"mrkdp/{sample}.bam"
+	output:
+		"coverage/{sample}_coverage.txt"
+	log:
+		"logs/{sample}_coverage.log"
+	shell:
+		"bedtools genomecov -d -ibam {input} > {output} 2> {log}"
+
+
+#### SNP/Indel calling ####
+
 rule call_haplotypes_first_round:
 	input:
 		bamfile = "mrkdp/{sample}.bam",
@@ -238,7 +255,7 @@ rule call_haplotypes_first_round:
 #		"gatk -T CombineGVCFs -R {params.ref} {params.gvcf_list} -o {output} 2> {log}"
 
 
-#### First round genotyping and base recalibration ####
+## First round genotyping and base recalibration ##
 # This will give an initial set of variants. The top variants will then be used for base quality score recalibration 
 
 rule genotype_gvcfs_first_round:
@@ -317,7 +334,7 @@ rule make_recal_plots:
 		"gatk -T AnalyzeCovariates -R {params.ref} -before {input.before_table} -after {input.after_table} -plots {output} 2> {log}"
 
 
-#### Second round genotyping ####
+## Second round genotyping ##
 
 rule call_haplotypes_second_round:
 	input:
