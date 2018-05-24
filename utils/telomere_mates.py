@@ -8,7 +8,7 @@ import sys
 parser = argparse.ArgumentParser(description = "Create bam file containing non-telomeric mates of telomeric reads")
 
 parser.add_argument("input_file", help = "input bam file")
-parser.add_argument("-t", "--telomere_file", help = "Bed file containing telomere coordinates", required = True)
+parser.add_argument("-t", "--telomere_sequence", help = "telomere repeat sequence (default:TTAGGC)", default = "TTAGGC")
 parser.add_argument("-o", "--output", help = "output filename (default: telomere_discordant.bam)", default = "telomere_discordant.bam")
 parser.add_argument("-q", "--min_mapq", help = "minimum mapq for mate to be kept (default: 0)", type = int, default = 0)
 
@@ -36,30 +36,30 @@ output_file = pysam.AlignmentFile(args.output,"wb", template = bamfile)
 
 counter = 0
 
-# Iterate through telomere coords to find telomere-mapped reads
-with open(args.telomere_file) as f:
+# Find reverse complement of telomere sequence
+dna_dict = {"A":"T", "T":"A", "G":"C", "C":"G"}
+telo_revcomp = [ dna_dict[x] for x in reversed(args.telomere_sequence) ]
+telo_revcomp = "".join(telo_revcomp)
+print("telomere_mates.py: searching for mates of reads consisting of perfect " + args.telomere_sequence + " or " + telo_revcomp + " repeats")
 
-	# Get telomere coordinate
-	for line in f.readlines():
-		chrom = str(line.strip().split("\t")[0])
-		start = int(line.strip().split("\t")[1])
-		end = int(line.strip().split("\t")[2])
+# Find telomeric reads in bam file
+for read in bamfile.fetch():
 
-		for read in bamfile.fetch(chrom, start, end):
+	# See if read is telomeric
+	seq = read.seq
+	if re.match(seq, args.telomere_sequence * 100) or re.match(seq, telo_revcomp * 100):
+		
+		# Get mate, if possible
+		try:
+			mate = bamfile.mate(read)
+		except ValueError:
+			# Read is unmapped or has been filtered out
+			continue
 
-			# Find telomeric reads
-			if read.is_paired:
-				# Get mate, if possible
-				try:
-					mate = bamfile.mate(read)
-				except ValueError:
-					# Read is unmapped or has been filtered out
-					continue
-
-				# If the read pair is discordant, write the mate to the output file
-				if not read.is_proper_pair and mate.mapq > args.min_mapq:
-					output_file.write(mate)
-					counter += 1
+		# If the read pair is discordant, write the mate to the output file
+		if not read.is_proper_pair and mate.mapq > args.min_mapq:
+			output_file.write(mate)
+			counter += 1
 
 bamfile.close()
 output_file.close()
