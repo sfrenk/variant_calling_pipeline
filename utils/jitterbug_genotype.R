@@ -10,6 +10,13 @@ args <- parser$parse_args()
 # Read in transposon insertion data
 transposons <- read.table(args$input, sep = "\t", stringsAsFactors = FALSE, col.names = c("chr", "start", "end", "type", "sample"))
 
+# If there are no insertions, create an empty output file and exit
+if (nrow(transposons) == 0){
+    print("No transposon insertions found")
+    write.table("", args$output)
+    q()
+}
+
 # Create empty dataframe to be populated with genotyping data
 unique_transposons <- data.frame("chr" = character(), "start" = numeric(), "end" = numeric(), "type" = character(), "idx" = numeric(), stringsAsFactors = FALSE)
 

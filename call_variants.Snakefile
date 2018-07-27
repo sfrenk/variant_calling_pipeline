@@ -1,6 +1,7 @@
 import glob
 import re
 import sys
+import os
 
 ############################    DESCRIPTION    ##############################
 
@@ -19,13 +20,23 @@ import sys
 ############################    PARAMETERS    ##############################
 
 # Input parameters
-BASEDIR = "fastq2"
+BASEDIR = "/proj/ahmedlab/steve/seq/seq_data/trt1_polq1_rtel1_021218/"
 EXTENSION = ".fastq.gz"
 PAIRED = True
-PROJECT_NAME = "cohort"
+PROJECT_NAME = "wt_ctrl"
 
-# Remove items from the list below if you do not want the corresponding analysis to be performed
-OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants", "repeat_copy_number", "transposons", "telomere_recombination"]
+# Remove items from the list below if you do not want the corresponding analysis to be performed.
+
+# Options:
+#	snps_indels
+#	structural_variants_svaba
+#	structural_variants_meerkat (Useful for variants with single breakpoints eg. telomere recombination events)
+#	CNV
+#	repeat_copy_number
+#	transposons
+#	telomere_recombination
+
+OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants_svaba", "structural_variants_meerkat", "CNV", "repeat_copy_number", "transposons", "telomere_recombination"]
 
 ############################	VARIABLES	################################
 
@@ -36,11 +47,11 @@ UTILS_DIR = "/nas/longleaf/home/sfrenk/pipelines/variant_calling"
 #### Mapping and SNPs/indels ####
 
 # Sequences of adapters to be trimmed
-ADAPTERS="/nas/longleaf/apps/bbmap/37.62/bbmap/resources/adapters.fa"
+ADAPTERS="~/proj/seq/bbmap/adapters.fa"
 # Fasta reference
 REF = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/genome.fa"
 # BWA index
-BWA_INDEX = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/bwa/genome"
+BWA_INDEX = "/nas/longleaf/home/sfrenk/proj/seq/WS251/genome/bwa/genome.fa"
 # Picard jar location
 PICARD = "/nas/longleaf/apps/picard/2.2.4/picard-tools-2.2.4/picard.jar"
 # Picard reference dict for genome
@@ -58,10 +69,13 @@ MEERKAT_GENOME = "/nas/longleaf/home/sfrenk/local/Meerkat/genomes/WS251"
 # Annoyingly, Meerkat requires this old version of samtools, but I want to keep the most recent samtools version in my PATH
 SAMTOOLS_OLD = "/nas/longleaf/home/sfrenk/local/samtools/0.1.19/"
 
-#### Copy Number ####
+#### CNV ####
+CNVNATOR = "~/local/CNVnator_v0.3/src/cnvnator"
+
+#### Repeat Copy Number ####
 
 # Tandem repeat loci gtf file
-REPEATS_GTF = "repeats.gtf"
+REPEATS_GTF = "~/proj/seq/WS251/repeats.gtf"
 
 #### Transposons ####
 
@@ -70,10 +84,13 @@ JITTERBUG_DIR = "/proj/ahmedlab/steve/Software/jitterbug/"
 # GTF/GFF3 file containing all known transposon insertions in the genome
 TRANSPOSONS_GTF = "/proj/ahmedlab/steve/seq/transposons/ce11_rebpase/ce11_transposons.gff3"
 
-#### Telomere mates ####
+#### Recombination ####
 
-# Telomere coordinates bed file
-TELOMERE_BED = "/nas/longleaf/home/sfrenk/proj/seq/telomere/telomeres.bed"
+# Telomere sequence
+TELOMERE_SEQ = "TTAGGC"
+# Minimum number of telomere repeats required
+TELOMERE_COUNT = 6
+
 
 ###############################################################################
 
@@ -84,15 +101,26 @@ SAMPLES = [ re.search(BASEDIR + "/?([^/]+)" + EXTENSION, x).group(1) for x in SA
 if PAIRED:
 	SAMPLES = list(set([re.search("(^.+)_[12]$", x).group(1) for x in SAMPLES]))
 
-# Construct input option for CombineGVCFs
-GVCF_LIST1 = " ".join([ "-V vcf_1/" + x + ".g.vcf" for x in SAMPLES ])
-GVCF_LIST2 = " ".join([ "-V vcf_2/" + x + ".g.vcf" for x in SAMPLES ])
-
+# Check samples
 if len(SAMPLES) == 0:
 	sys.exit("ERROR: no samples in base directory!")
 
+# motif_counter.sh sometimes gives an error even if it worked. Check to see if telomeres.txt file looks good and remove the telomere recombination step if so
+
+if "telomere_recombination" in OPTIONS_LIST and os.path.isfile("./telomeres.txt"):
+	with open("telomeres.txt") as f:
+		telo_lines = sum(1 for _ in f)
+
+	if telo_lines > len(SAMPLES):
+		print("\nNot running telomere counting step as telomeres.txt is complete\n")
+		OPTIONS_LIST.remove("telomere_recombination")
+	else:
+		print("\ntelomeres.txt is present but incomplete so file will be removed\n")
+		os.remove("telomeres.txt")
+		os.remove("telomeres.txt.temp")
+
 # Identify target output file(s)
-output_files = {"coverage" : expand("coverage/{sample}_coverage.txt", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants" : "final/" + PROJECT_NAME + ".structural.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : expand("telomere_recombination/{sample}.bam.bg", sample = SAMPLES)}
+output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres.txt.temp", "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt"}
 
 
 rule all:
@@ -117,6 +145,7 @@ if PAIRED:
 		log:
 			"logs/{sample}_trim.log"
 		shell:
+			"module add bbmap; "
 			"bbduk.sh -Xmx4g -ignorebadquality in1={input.read1} in2={input.read2} out1={output.out1} out2={output.out2} ref={params.adapter_file} ktrim=r overwrite=true k=23 maq=20 mink=11 hdist=1 > {log} 2>&1"
 
 	rule bwa_mapping:
@@ -131,8 +160,11 @@ if PAIRED:
 		log:
 			"logs/{sample}_map.log"
 		threads: 8
+		log:
+			"logs/{sample}_map.log"
 		shell:
-			"bwa mem -t {threads} -R '@RG\tID:{params.name}\tSM:{params.name}\tPL:ILLUMINA' {params.idx} {input.trimmed1} {input.trimmed2} > {output}"
+			"module add bwa; "
+			"bwa mem -t {threads} -R '@RG\tID:{params.name}\tSM:{params.name}\tPL:ILLUMINA' {params.idx} {input.trimmed1} {input.trimmed2} > {output} 2> {log}"
 
 else:
 	rule trim:
@@ -146,6 +178,7 @@ else:
 		log:
 			"logs/{sample}_trim.log"
 		shell:
+			"module add bbmap; "
 			"bbduk.sh -Xmx4g -ignorebadquality in={input} out={output} ref={params.adapter_file} ktrim=r overwrite=true k=23 maq=20 mink=11 hdist=1 > {log} 2>&1"
 
 	rule bwa_mapping:
@@ -159,7 +192,9 @@ else:
 		log:
 			"logs/{sample}_map.log"
 		threads: 8
-		shell: "bwa mem -t {threads} -R '@RG\tID:{params.name}\tSM:{params.name}\tPL:ILLUMINA' {params.idx} {input} > {output} 2> {log}"
+		shell:
+			"module add bwa; "
+			"bwa mem -t {threads} -R '@RG\tID:{params.name}\tSM:{params.name}\tPL:ILLUMINA' {params.idx} {input} > {output} 2> {log}"
 
 rule convert_to_bam:
 	input:
@@ -172,6 +207,7 @@ rule convert_to_bam:
 		"logs/{sample}_convert_to_bam.log"
 	shell:
 		#"sed -r 's/-R @RG\tID([^\t]+)\t/-R @RG\\t\1\\t/' {input} | samtools view -bh | samtools sort -o {output} -"
+		"module add samtools; "
 		"sed -r 's/-R @RG.*SM/-R @RG\tID:{params.name}\tSM/' {input} | sed 's/ID:bwa/ID:{params.name}/' | samtools view -bh - | samtools sort -o {output} - 2> {log}"
 		#"samtools view -bh {input} | samtools sort -o {output} -"
 
@@ -181,6 +217,7 @@ rule index_bam:
 	output:
 		"bam/{sample}.bam.bai"
 	shell:
+		"module add samtools; "
 		"samtools index {input}"
 
 
@@ -198,6 +235,7 @@ rule mark_duplicates:
 	log:
 		"logs/{sample}_mark_duplicates.log"
 	shell:
+		"module add picard; "
 		"java -jar {params.picard} MarkDuplicates INPUT={input.bamfile} OUTPUT={output.bam_out} METRICS_FILE={output.metrics} ASSUME_SORTED=true REMOVE_DUPLICATES=true 2> {log}"
 
 rule index_mrkdp_bam:
@@ -206,6 +244,7 @@ rule index_mrkdp_bam:
 	output:
 		"mrkdp/{sample}.bam.bai"
 	shell:
+		"module add samtools; "
 		"samtools index {input}"
 
 
@@ -215,11 +254,12 @@ rule calculate_coverage:
 	input:
 		"mrkdp/{sample}.bam"
 	output:
-		"coverage/{sample}_coverage.txt"
+		"coverage/{sample}_coverage.txt.gz"
 	log:
 		"logs/{sample}_coverage.log"
 	shell:
-		"bedtools genomecov -d -ibam {input} > {output} 2> {log}"
+		"module add bedtools; "
+		"bedtools genomecov -d -ibam {input} | gzip > {output} 2> {log}"
 
 
 #### SNP/Indel calling ####
@@ -236,6 +276,7 @@ rule call_haplotypes_first_round:
 	log:
 		"logs/{sample}_call_haplotypes1.log"
 	shell:
+		"module add gatk; "
 		"gatk -T HaplotypeCaller -R {params.ref} -I {input.bamfile} --emitRefConfidence GVCF --variant_index_type LINEAR --variant_index_parameter 128000 -out_mode EMIT_ALL_CONFIDENT_SITES -o {output} 2> {log}"
 
 # For samples > 200, need to combine gvcfs into batches with CombineGVCFs
@@ -264,11 +305,12 @@ rule genotype_gvcfs_first_round:
 	output:
 		"vcf_1/" + PROJECT_NAME + ".first_pass.vcf"
 	params:
-		gvcf_list = GVCF_LIST1,
+		gvcf_list = " ".join([ "-V vcf_1/" + x + ".g.vcf" for x in SAMPLES ]),
 		ref = REF
 	log:
 		"logs/genotype_gvcfs1.log"
 	shell:
+		"module add gatk; "
 		"gatk -T GenotypeGVCFs -R {params.ref} {params.gvcf_list} -o {output} 2> {log}"
 
 rule make_base_recalibration_table:
@@ -283,6 +325,7 @@ rule make_base_recalibration_table:
 		log:
 			"logs/{sample}_make_base_recalibration_table.log"
 		shell:
+			"module add gatk; "
 			"gatk -T BaseRecalibrator -R {params.ref} -I {input.bamfile} --knownSites {input.gvcf} -o {output} 2> {log}"
 
 rule base_recalibration:
@@ -296,6 +339,7 @@ rule base_recalibration:
 	log:
 		"logs/{sample}_base_recalibration.log"
 	shell:
+		"module add gatk; "
 		"gatk -T PrintReads -I {input.bamfile} -R {params.ref} -BQSR {input.recal_table} -o {output} 2> {log}"
 
 rule index_recalibrated_bam:
@@ -304,6 +348,7 @@ rule index_recalibrated_bam:
 	output:
 		"recal/{sample}.bqsr.bam.bai"
 	shell:
+		"module add samtools; "
 		"samtools index {input}"
 
 rule make_base_recalibration_after_table:
@@ -318,6 +363,7 @@ rule make_base_recalibration_after_table:
 		log:
 			"logs/{sample}_make_base_recalibration_after_table.log"
 		shell:
+			"module add gatk; "
 			"gatk -T BaseRecalibrator -R {params.ref} -I {input.bamfile} --knownSites {input.gvcf} -o {output} 2> {log}"
 
 rule make_recal_plots:
@@ -331,6 +377,7 @@ rule make_recal_plots:
 	log:
 		"logs/{sample}_make_recal_plots.log"
 	shell:
+		"module add gatk; "
 		"gatk -T AnalyzeCovariates -R {params.ref} -before {input.before_table} -after {input.after_table} -plots {output} 2> {log}"
 
 
@@ -348,6 +395,7 @@ rule call_haplotypes_second_round:
 	log:
 		"logs/{sample}_call_haplotypes2.log"
 	shell:
+		"module add gatk; "
 		"gatk -T HaplotypeCaller -R {params.ref} -I {input.bamfile} --emitRefConfidence GVCF --variant_index_type LINEAR --variant_index_parameter 128000 -out_mode EMIT_ALL_CONFIDENT_SITES -o {output} 2> {log}"
 
 # For samples > 200, need to combine gvcfs into batches with CombineGVCFs
@@ -371,11 +419,12 @@ rule genotype_gvcfs_second_round:
 	output:
 		"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
 	params:
-		gvcf_list = GVCF_LIST2,
+		gvcf_list = " ".join([ "-V vcf_2/" + x + ".g.vcf" for x in SAMPLES ]),
 		ref = REF
 	log:
 		"logs/genotype_gvcfs2.log"
 	shell:
+		"module add gatk; "
 		"gatk -T GenotypeGVCFs -R {params.ref} {params.gvcf_list} -o {output} 2> {log}"
 
 
@@ -392,6 +441,7 @@ rule get_snp_training_set:
 	params:
 		utils_dir = UTILS_DIR
 	shell:
+		"module add vcftools picard; "
 		"bash {params.utils_dir}/sample_vcf.sh -v {input} -o {output} 2> {log}"
 
 rule get_indel_training_set:
@@ -402,6 +452,7 @@ rule get_indel_training_set:
 	log:
 		"logs/get_indel_training_set.log"
 	shell:
+		"module add vcftools picard; "
 		"sample_vcf -t indel -v {input} -o {output} 2> {log}"
 
 rule recal_snps:
@@ -419,6 +470,7 @@ rule recal_snps:
 	log:
 		"logs/snp_recal.log"
 	shell:
+		"module add gatk; "
 		"gatk -T VariantRecalibrator -nt {threads} -R {params.ref} -U ALLOW_SEQ_DICT_INCOMPATIBILITY --maxGaussians 4 -input {input.gvcf} -an QD -an DP -an FS -an MQRankSum -an ReadPosRankSum -mode SNP -resource:highscoreset,known=true,training=true,truth=true,prior=10.0 {input.training_set} -recalFile {output.recal_file} -tranchesFile {output.tranches_file} -rscriptFile {output.plots_file} 2> {log}"
 
 rule recal_indels:
@@ -436,6 +488,7 @@ rule recal_indels:
 	log:
 		"logs/indel_recal.log"
 	shell:
+		"module add gatk; "
 		"gatk -T VariantRecalibrator -nt {threads} -R {params.ref} --maxGaussians 4 -U ALLOW_SEQ_DICT_INCOMPATIBILITY -input {input.gvcf} -an QD -an DP -an FS -an MQRankSum -an ReadPosRankSum -mode INDEL -resource:highscoreset,known=true,training=true,truth=true,prior=10.0 {input.training_set} -recalFile {output.recal_file} -tranchesFile {output.tranches_file} -rscriptFile {output.plots_file} 2> {log}"
 
 rule apply_snp_recal:
@@ -450,6 +503,7 @@ rule apply_snp_recal:
 	log:
 		"logs/apply_snp_recal.log"
 	shell:
+		"module add gatk; "
 		"gatk -T ApplyRecalibration -R {params.ref} -input {input.gvcf} -tranchesFile {input.tranches_file} -recalFile {input.recal_file} -mode SNP --ts_filter_level 99.95 -o {output} 2> {log}"
 
 rule apply_indel_recal:
@@ -464,6 +518,7 @@ rule apply_indel_recal:
 	log:
 		"logs/apply_indel_recal.log"
 	shell:
+		"module add gatk; "
 		"gatk -T ApplyRecalibration -R {params.ref} -input {input.gvcf} -tranchesFile {input.tranches_file} -recalFile {input.recal_file} -mode INDEL --ts_filter_level 95 -o {output} 2> {log}"
 
 #### Annotating variants according to their predicted effect ####
@@ -495,6 +550,7 @@ rule anotate_indels:
 	log:
 		"logs/annotate_snps.log"
 	shell:
+		"module add gatk; "
 		"java -Xmx4g -jar {params.snpeff}/snpEff.jar -nodownload -t -c {params.snpeff}/snpEff.config WBcel235.86 {input} | grep -E '#|PASS' > {output} 2> {log}"
 
 rule combine_variants:
@@ -508,12 +564,15 @@ rule combine_variants:
 	log:
 		"logs/combine_variants.log"
 	shell:
+		"module add gatk; "
 		"gatk -T CombineVariants -R {params.ref} --genotypemergeoption UNSORTED --variant {input.snps_vcf} --variant {input.indels_vcf} -o {output}"
 
 
 #### Structural Variant calling ####
 
-if "structural_variants" in OPTIONS_LIST:
+# I am currently using two different SV tools: meerkat and svaba
+
+if "structural_variants_meerkat" in OPTIONS_LIST:
 	rule symlink_bam:
 		input:
 			bamfile = "mrkdp/{sample}.bam",
@@ -537,12 +596,14 @@ if "structural_variants" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_meerkat_pre_process.log"
 		shell:
+			"module add perl; "
 			"perl {params.meerkat_scripts}/pre_process.pl -S {params.samtools_old} -s 20 -k 1500 -q 15 -l 0 -b {input} 2> {log}"
 
 	rule run_meerkat:
 		input:
 			bamfile = "meerkat/{sample}/{sample}.bam",
-			preproc_log = "meerkat/{sample}/{sample}.pre.log"
+			preproc_log = "meerkat/{sample}/{sample}.pre.log",
+			isinfo = "meerkat/{sample}/{sample}.isinfo"
 		output:
 			meerkat_bam = "meerkat/{sample}/{sample}.sr.bam",
 			cluster_file = "meerkat/{sample}/{sample}.clusters"
@@ -555,6 +616,7 @@ if "structural_variants" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_run_meerkat.log"
 		shell:
+			"module add perl bwa; "
 			"perl {params.meerkat_scripts}/meerkat.pl -S {params.samtools_old} -s 20 -d 5 -p 3 -o 1 -m 0 -l 0 -t {threads} -F {params.meerkat_genome}/fasta -b {input.bamfile} 2> {log}"
 
 	rule meerkat_mechanism:
@@ -569,6 +631,7 @@ if "structural_variants" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_meerkat_mechanism.log"
 		shell:
+			"module add perl; "
 			"perl {params.meerkat_scripts}/mechanism.pl -R {params.meerkat_genome}/*_rmsk.txt -b {input.bamfile} 2> {log}"
 
 	# Combine meekat output into one VCF-style file
@@ -576,22 +639,87 @@ if "structural_variants" in OPTIONS_LIST:
 		input:
 			expand("meerkat/{sample}/{sample}.variants", sample = SAMPLES)
 		output:
-			"final/" + PROJECT_NAME + ".structural.txt" 
+			"meerkat/" + PROJECT_NAME + ".structural.meerkat.txt" 
 		params:
-			meerkat_scripts = MEERKAT_SCRIPTS,
-			samtools_old = SAMTOOLS_OLD,
 			utils_dir = UTILS_DIR
 		log:
 			"logs/meerkat_compile.log"
 		shell:
+			"module add r; "
 			"Rscript {params.utils_dir}/process_meerkat_output.R -o {output} {input} 2> {log}"
+
+if "structural_variants_svaba" in OPTIONS_LIST:
+	rule run_svaba:
+		input:
+			bamfiles = expand("mrkdp/{sample}.bam", sample = SAMPLES),
+			bamidxs = expand("mrkdp/{sample}.bam.bai", sample = SAMPLES)
+		output:
+			"svaba/" + PROJECT_NAME + ".log"
+		params:
+			ref = BWA_INDEX,
+			input_list = " ".join([ "-t mrkdp/" + x + ".bam" for x in SAMPLES ]),
+			output_base = "svaba/" + PROJECT_NAME
+		threads:
+			8
+		log:
+			"logs/svaba.log"
+		shell:
+			"module add bwa samtools; "
+			"svaba run {params.input_list} -p {threads} -a {params.output_base} -G {params.ref} 2> {log}"
+
+#### CNV ####
+if "CNV" in OPTIONS_LIST:
+	rule cnv_pre_process:
+		input:
+			bamfile = "bam/{sample}.bam",
+			bamidx = "bam/{sample}.bam.bai"
+		output:
+			"cnv/{sample}"
+		params:
+			cnvnator = CNVNATOR,
+			ref = REF
+		log:
+			"logs/{sample}_cnv_pre_process.log"
+		shell:
+			"{params.cnvnator} -root {output} -genome {params.ref} -tree {input.bamfile} &&\
+			{params.cnvnator} genome -root {output} -his 100 -d /nas/longleaf/home/sfrenk/proj/seq/WS251/genome/cnvnator/ &&\
+			{params.cnvnator} -root {output} -stat 100 && \
+			{params.cnvnator} -root {output} -partition 100"
+
+	rule cnv_call:
+		input:
+			"cnv/{sample}"
+		output:
+			"cnv/{sample}_cnvs.txt"
+		params:
+			cnvnator = CNVNATOR
+		log:
+			"logs/{sample}_cnv_call.log"
+		shell:
+			"{params.cnvnator} -root {input} -call 100 > {output} 2> {log}"
+
+	rule cnv_compile:
+		input:
+			expand("cnv/{sample}_cnvs.txt", sample = SAMPLES)
+		output:
+			"cnv/" + PROJECT_NAME + ".cnv.txt" 
+		params:
+			utils_dir = UTILS_DIR
+		log:
+			"logs/cnv_compile.log"
+		shell:
+			"module add r"
+			"Rscript {params.utils_dir}/process_cnvnator_output.R -o {output} {input} 2> {log}"
+
+
+
 
 #### Telomere/rDNA length analysis ####
 
 # Note that pre-duplicate marked files are used here.
 
-if "tandem_repeat_copy_number" in OPTIONS_LIST:
-	rule tandem_repeat_copy_number:
+if "repeat_copy_number" in OPTIONS_LIST:
+	rule repeat_copy_number:
 		input:
 			bamfile = "bam/{sample}.bam",
 			bamidx = "bam/{sample}.bam.bai"
@@ -603,6 +731,7 @@ if "tandem_repeat_copy_number" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_copy_number.log"
 		shell:
+			"module add python; "
 			"python3 {params.utils_dir}/calculate_repeat_copy_number.py -g {params.repeats_gtf} -l -o {output} {input.bamfile} 2> {log}"
 
 #### Transposons ####
@@ -623,7 +752,7 @@ if "transposons" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_transposon_insertions.log"
 		shell:
-			"module load python/2.7.12; "
+			"module load python/2.7.14; "
 			"python {params.jitterbug_dir}/jitterbug.py --pre_filter -l {params.sample_name} -n {threads} -o transposons/{params.sample_name}/{params.sample_name} {input.bamfile} {params.transposons_gtf} 2> {log}"
 
 	rule jitterbug_filter:
@@ -636,6 +765,7 @@ if "transposons" in OPTIONS_LIST:
 		log:
 			"logs/jitterbug_filter.log"
 		shell:
+			"module add python; "
 			"python3 {params.utils_dir}/jitterbug_filter.py -o {output} {input} &> {log}"
 
 	rule jitterbug_genotype:
@@ -648,23 +778,45 @@ if "transposons" in OPTIONS_LIST:
 		log:
 			"logs/jitterbug_genotype.log"
 		shell:
+			"module add r; "
 			"Rscript {params.utils_dir}/jitterbug_genotype.R -o {output} {input} &> {log}"
 
 
 #### Telomere recombination ####
 
+#if "telomere_recombination" in OPTIONS_LIST:
+#	rule telomere_recombination:
+#		input:
+#			bamfile = "mrkdp/{sample}.bam",
+#			bamidx = "mrkdp/{sample}.bam.bai"
+#		output:
+#			"telomere_recombination/{sample}.bam.bg"
+#		params:
+#			utils_dir = UTILS_DIR,
+#			output_base = "telomere_recombination/{sample}.bam",
+#			telomere_seq = TELOMERE_SEQ
+#		log:
+#			"logs/{sample}_telomere_recombination.log"
+#		shell:
+#			"python3 {params.utils_dir}/telomere_mates.py -p -o {params.output_base} -t {params.telomere_seq} -q 20 {input.bamfile} &> {log}"
+
+#### Telomere count ####
+
 if "telomere_recombination" in OPTIONS_LIST:
-	rule telomere_recombination:
+	rule telomere_counts:
 		input:
-			bamfile = "mrkdp/{sample}.bam",
-			bamidx = "mrkdp/{sample}.bam.bai"
+			bamfiles = expand("mrkdp/{sample}.bam", sample = SAMPLES),
+			bamidxs = expand("mrkdp/{sample}.bam.bai", sample = SAMPLES)
 		output:
-			"telomere_recombination/{sample}.bam.bg"
+			# motif_counter.sh sometimes gives error for no good reason. Using a dummy output file prevents snakemake from removing the real output file.
+			"telomeres.txt.temp"
 		params:
-			utils_dir = UTILS_DIR,
-			output_base = "telomere_recombination/{sample}.bam",
-			telomere_bed = TELOMERE_BED
+			telomere_seq = TELOMERE_SEQ,
+			count = TELOMERE_COUNT
 		log:
-			"logs/{sample}_telomere_recombination.log"
+			"logs/telomere_counts.log"
 		shell:
-			"python3 {params.utils_dir}/telomere_mates.py -o {params.output_base} -t {params.telomere_bed} -q 20 {input.bamfile} &> {log}"
+			"module load samtools; "
+			"if [[ -f telomeres.txt ]]; then rm telomeres.txt; fi; "
+			"touch telomeres.txt.temp; "
+			'printf "{params.telomere_seq}\n{params.count}\n" | bash ~/local/motif_counter.sh -i ./bam -o telomeres -q 0 -Q 0 -p -u -v 2> {log}'

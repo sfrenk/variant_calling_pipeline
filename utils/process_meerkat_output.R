@@ -1,5 +1,9 @@
+#!/usr/bin/env Rscript
+
 suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(argparse))
+
+# Compiles multiple Meerkat output files into a single VCF-style file
 
 parser <- ArgumentParser()
 parser$add_argument("input", help = "meerkat .variants files to process", nargs = "+")
@@ -12,7 +16,7 @@ args <- parser$parse_args()
 # Compile df
 print("Reading and compiling data...")
 
-vars <- data.frame("type" = character(), "mechanism" = character(), "cluster_id" = character(), "sup_pairs" = character(), "split_reads" = character(), "chr" = character(), "start" = numeric(), "end" = numeric(), "size" = character(), "opt1" = character(), "opt2" = character(), "opt3" = character(), "opt4" = character(), "opt5" = character(), "opt6" = character(), "opt7" = character(), stringsAsFactors = FALSE, sample = character())
+vars <- data.frame("type" = character(), "mechanism" = character(), "cluster_id" = character(), "sup_pairs" = character(), "split_reads" = character(), "chr" = character(), "start" = numeric(), "end" = numeric(), "opt1" = character(), "opt2" = character(), "opt3" = character(), "opt4" = character(), "opt5" = character(), "opt6" = character(), "opt7" = character(), "opt8" = character(), stringsAsFactors = FALSE, sample = character())
 
 classes <- sapply(vars, class)
 
@@ -29,7 +33,7 @@ vars[vars==""] <- "empty"
 print("Genotyping...")
 
 # Initialize data frame to store variants
-unique_vars <- data.frame("type" = character(), "mechanism" = character(), "cluster_id" = numeric(), "sup_pairs" = numeric(), "split_reads" = numeric(), "chr" = character(), "start" = numeric(), "end" = numeric(), "size" = numeric(), "opt1" = character(), "opt2" = character(), "opt3" = character(), "opt4" = character(), "opt5" = character(), "opt6" = character(), "opt7" = character(), "idx" = numeric(), stringsAsFactors = FALSE)
+unique_vars <- data.frame("type" = character(), "mechanism" = character(), "cluster_id" = numeric(), "sup_pairs" = numeric(), "split_reads" = numeric(), "chr" = character(), "start" = numeric(), "end" = numeric(), "opt1" = numeric(), "opt2" = character(), "opt3" = character(), "opt4" = character(), "opt5" = character(), "opt6" = character(), "opt7" = character(), "opt8" = character(), "idx" = numeric(), stringsAsFactors = FALSE)
 
 # Add genotype column for each sample
 for (i in args$input){
@@ -46,14 +50,14 @@ for (i in 1:nrow(vars)) {
     if (grepl("ins", vars[i, "type"])){
         
         match <- unique_vars %>% filter(type == vars[i, "type"])
-        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, opt1 == vars[i, "opt1"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < 100, abs(as.numeric(opt3) - as.numeric(vars[i, "opt3"])) < 100)
+        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, opt1 == vars[i, "opt2"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt3"])) < 100, abs(as.numeric(opt3) - as.numeric(vars[i, "opt4"])) < 100)
         
         
     } else if (vars[i, "type"] == "transl_inter"){
-        # Interchromsomal translations are missing the "size" column, so the features are shifted forward by one column
+        # Interchromsomal translations have second chromosome as opt1 instead of size, so the features are shifted forward by one column
 
         match <- unique_vars %>% filter(type == vars[i, "type"]) 
-        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, size == vars[i, "size"], abs(as.numeric(opt1) - as.numeric(vars[i, "opt1"])) < 100, abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < 100)
+        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, opt1 == vars[i, "opt1"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < 100, abs(as.numeric(opt3) - as.numeric(vars[i, "opt3"])) < 100)
         
     } else{
         
