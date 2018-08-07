@@ -8,6 +8,7 @@ suppressPackageStartupMessages(library(argparse))
 
 parser <- ArgumentParser()
 parser$add_argument("input", help = "CNVnator output files to process", nargs = "+")
+parser$add_argument("-d", "--distance", help = "Breakpoint distance cutoff to define unique events (Default: 100)", type = "integer", default = 100)
 parser$add_argument("-o", "--output", help = "output filename", default = "cnvnator_variants.txt")
 
 args <- parser$parse_args()
@@ -54,7 +55,7 @@ for (i in 1:nrow(vars)) {
     name <- vars[i, "sample"]
     
     # Check if variant is already in the unique_vars database
-    match <- unique_vars %>% filter(type == vars[i, "type"], chrom == vars[i, "chrom"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100)
+    match <- unique_vars %>% filter(type == vars[i, "type"], chrom == vars[i, "chrom"], abs(start - vars[i, "start"]) < args$distance, abs(end - vars[i, "end"]) < args$distance)
         
     if (nrow(match) == 0) {
         

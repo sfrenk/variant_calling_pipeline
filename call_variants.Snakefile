@@ -61,6 +61,9 @@ SNPEFF = "/nas/longleaf/home/sfrenk/local/src/snpEff/"
 
 #### Structural Variants ####
 
+# Breakpoint distance cutoff for defining unique events (note: this option is also used for CNVnator)
+DISTANCE_CUTOFF=200
+
 # Meerkat scripts directory
 MEERKAT_SCRIPTS = "/nas/longleaf/home/sfrenk/local/Meerkat/scripts/"
 # Meerkat genome directory
@@ -83,6 +86,10 @@ REPEATS_GTF = "~/proj/seq/WS251/repeats.gtf"
 JITTERBUG_DIR = "/proj/ahmedlab/steve/Software/jitterbug/"
 # GTF/GFF3 file containing all known transposon insertions in the genome
 TRANSPOSONS_GTF = "/proj/ahmedlab/steve/seq/transposons/ce11_rebpase/ce11_transposons.gff3"
+# Paired end support required
+JITTERBUG_PAIRED = 2
+# Soft-clipped support required
+JITTERBUG_SOFT = 1
 
 #### Recombination ####
 
@@ -117,7 +124,8 @@ if "telomere_recombination" in OPTIONS_LIST and os.path.isfile("./telomeres.txt"
 	else:
 		print("\ntelomeres.txt is present but incomplete so file will be removed\n")
 		os.remove("telomeres.txt")
-		os.remove("telomeres.txt.temp")
+		if os.path.isfile("telomeres.txt.temp"):
+			os.remove("telomeres.txt.temp")
 
 # Identify target output file(s)
 output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres.txt.temp", "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt"}
@@ -641,12 +649,13 @@ if "structural_variants_meerkat" in OPTIONS_LIST:
 		output:
 			"meerkat/" + PROJECT_NAME + ".structural.meerkat.txt" 
 		params:
-			utils_dir = UTILS_DIR
+			utils_dir = UTILS_DIR,
+			distance_cutoff = DISTANCE_CUTOFF
 		log:
 			"logs/meerkat_compile.log"
 		shell:
 			"module add r; "
-			"Rscript {params.utils_dir}/process_meerkat_output.R -o {output} {input} 2> {log}"
+			"Rscript {params.utils_dir}/process_meerkat_output.R -d {params.distance_cutoff} -o {output} {input} 2> {log}"
 
 if "structural_variants_svaba" in OPTIONS_LIST:
 	rule run_svaba:
@@ -671,8 +680,8 @@ if "structural_variants_svaba" in OPTIONS_LIST:
 if "CNV" in OPTIONS_LIST:
 	rule cnv_pre_process:
 		input:
-			bamfile = "bam/{sample}.bam",
-			bamidx = "bam/{sample}.bam.bai"
+			bamfile = "mrkdp/{sample}.bam",
+			bamidx = "mrkdp/{sample}.bam.bai"
 		output:
 			"cnv/{sample}"
 		params:
@@ -681,10 +690,10 @@ if "CNV" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_cnv_pre_process.log"
 		shell:
-			"{params.cnvnator} -root {output} -genome {params.ref} -tree {input.bamfile} &&\
-			{params.cnvnator} genome -root {output} -his 100 -d /nas/longleaf/home/sfrenk/proj/seq/WS251/genome/cnvnator/ &&\
-			{params.cnvnator} -root {output} -stat 100 && \
-			{params.cnvnator} -root {output} -partition 100"
+			"{params.cnvnator} -root {output} -genome {params.ref} -tree {input.bamfile} &> {log} &&\
+			{params.cnvnator} genome -root {output} -his 100 -d /nas/longleaf/home/sfrenk/proj/seq/WS251/genome/cnvnator/ &>> {log} &&\
+			{params.cnvnator} -root {output} -stat 100 &>> {log} && \
+			{params.cnvnator} -root {output} -partition 100 &>> {log}"
 
 	rule cnv_call:
 		input:
@@ -704,12 +713,13 @@ if "CNV" in OPTIONS_LIST:
 		output:
 			"cnv/" + PROJECT_NAME + ".cnv.txt" 
 		params:
-			utils_dir = UTILS_DIR
+			utils_dir = UTILS_DIR,
+			distance_cutoff = DISTANCE_CUTOFF
 		log:
 			"logs/cnv_compile.log"
 		shell:
-			"module add r"
-			"Rscript {params.utils_dir}/process_cnvnator_output.R -o {output} {input} 2> {log}"
+			"module add r; "
+			"Rscript {params.utils_dir}/process_cnvnator_output.R -d {params.distance_cutoff} -o {output} {input} &> {log}"
 
 
 
@@ -761,12 +771,14 @@ if "transposons" in OPTIONS_LIST:
 		output:
 			"transposons/" + PROJECT_NAME + ".all.transposons.txt"
 		params:
-			utils_dir = UTILS_DIR
+			utils_dir = UTILS_DIR,
+			paired_support = JITTERBUG_PAIRED,
+			soft_support = JITTERBUG_SOFT
 		log:
 			"logs/jitterbug_filter.log"
 		shell:
 			"module add python; "
-			"python3 {params.utils_dir}/jitterbug_filter.py -o {output} {input} &> {log}"
+			"python3 {params.utils_dir}/jitterbug_filter.py -p {params.paired_support} -s {params.soft_support} -o {output} {input} &> {log}"
 
 	rule jitterbug_genotype:
 		input:

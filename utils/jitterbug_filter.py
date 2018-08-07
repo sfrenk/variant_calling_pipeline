@@ -9,6 +9,8 @@ parser = argparse.ArgumentParser(description = "Process the gff3 output files fr
 parser.add_argument("input", help = "Jitterbug output files to process", nargs = "+")
 parser.add_argument("-o", "--output", help = "output file name name (default: jitterbug_output_cleaned.txt", default = "jitterbug_output_cleaned.txt")
 parser.add_argument("-t", "--tag", help = "Identifier to be used in the fifth column (by default, this is extracted from gff3)", default = None)
+parser.add_argument("-p", "--paired_support", help = "Number of supporting paired end reads required for both fwd and rev clusters to call insertion (default: 1)", type = int, default = 1)
+parser.add_argument("-s", "--soft_support", help = "Number of supporting softclipped reads required to call insertion (default: 0)", type = int, default = 0)
 
 args = parser.parse_args()
 
@@ -41,34 +43,16 @@ for file in args.input:
 		rev = re.search("Inserted_TE_tags_rev=([^;]*)", attributes).group(1).split(", ")
 
 		# Get number of supporting reads
-		#fwd_support = re.search
+		fwd_support = int(re.search("supporting_fwd_reads=([0-9]+);", attributes).group(1))
+		rev_support = int(re.search("supporting_rev_reads=([0-9]+);", attributes).group(1))
+		soft_support = int(re.search("softclipped_support=([0-9]+);", attributes).group(1))
 
-		# If transposon insertion is legit, there should be both a forward and reverse tag with the same name. If more than one tags fits this criterium, the insertion is ambiguous and is not counted.
-		
-		paired_tags = []
+		# Check that support requirements are met
+		if fwd_support >= args.paired_support and rev_support >= args.paired_support and soft_support >= args.soft_support:
 
-		for tag in fwd:
-			if tag in rev:
-				paired_tags.append(tag)
-
-		if len(paired_tags) == 1: #and len(fwd) == 1 and len(rev) == 1:
-
-			# Define tag
-
-			if not args.tag:
-				tag = re.search("lib=([^;]+);", attributes).group(1)
-			else:
-				tag = args.tag
-
-			output_file.write(chrom + "\t" + start + "\t" + end + "\t" + str(paired_tags[0]) + "\t" + tag + "\n")
-			output_gff.write(line)
-
-		else:
-
-			# Group transposons into families. An insertion may be called assigned to multiple members of the same family due to sequence similarities
-
-			fwd = [re.search("[A-Za-z]+", x).group() for x in fwd]
-			rev = [re.search("[A-Za-z]+", x).group() for x in rev]
+			# If transposon insertion is legit, there should be both a forward and reverse tag with the same name. If more than one tags fits this criterium, the insertion is ambiguous and is not counted.
+			
+			paired_tags = []
 
 			for tag in fwd:
 				if tag in rev:
@@ -76,7 +60,7 @@ for file in args.input:
 
 			if len(paired_tags) == 1: #and len(fwd) == 1 and len(rev) == 1:
 
-			# Define tag
+				# Define tag
 
 				if not args.tag:
 					tag = re.search("lib=([^;]+);", attributes).group(1)
@@ -85,6 +69,29 @@ for file in args.input:
 
 				output_file.write(chrom + "\t" + start + "\t" + end + "\t" + str(paired_tags[0]) + "\t" + tag + "\n")
 				output_gff.write(line)
+
+			else:
+
+				# Group transposons into families. An insertion may be called assigned to multiple members of the same family due to sequence similarities
+
+				fwd = [re.search("[A-Za-z]+", x).group() for x in fwd]
+				rev = [re.search("[A-Za-z]+", x).group() for x in rev]
+
+				for tag in fwd:
+					if tag in rev:
+						paired_tags.append(tag)
+
+				if len(paired_tags) == 1: #and len(fwd) == 1 and len(rev) == 1:
+
+				# Define tag
+
+					if not args.tag:
+						tag = re.search("lib=([^;]+);", attributes).group(1)
+					else:
+						tag = args.tag
+
+					output_file.write(chrom + "\t" + start + "\t" + end + "\t" + str(paired_tags[0]) + "\t" + tag + "\n")
+					output_gff.write(line)
 
 	gff.close()
 output_file.close()

@@ -7,6 +7,7 @@ suppressPackageStartupMessages(library(argparse))
 
 parser <- ArgumentParser()
 parser$add_argument("input", help = "meerkat .variants files to process", nargs = "+")
+parser$add_argument("-d", "--distance", help = "Breakpoint distance cutoff to define unique events (Default: 100)", type = "integer", default = 100)
 parser$add_argument("-o", "--output", help = "output filename", default = "meerkat_structural_variants.txt")
 
 args <- parser$parse_args()
@@ -50,18 +51,19 @@ for (i in 1:nrow(vars)) {
     if (grepl("ins", vars[i, "type"])){
         
         match <- unique_vars %>% filter(type == vars[i, "type"])
-        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, opt1 == vars[i, "opt2"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt3"])) < 100, abs(as.numeric(opt3) - as.numeric(vars[i, "opt4"])) < 100)
+        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < args$distance, abs(end - vars[i, "end"]) < args$distance, opt1 == vars[i, "opt2"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt3"])) < args$distance, abs(as.numeric(opt3) - as.numeric(vars[i, "opt4"])) < args$distance)
         
         
     } else if (vars[i, "type"] == "transl_inter"){
         # Interchromsomal translations have second chromosome as opt1 instead of size, so the features are shifted forward by one column
 
         match <- unique_vars %>% filter(type == vars[i, "type"]) 
-        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100, opt1 == vars[i, "opt1"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < 100, abs(as.numeric(opt3) - as.numeric(vars[i, "opt3"])) < 100)
+        match <- match %>% filter(chr == vars[i, "chr"], abs(start - vars[i, "start"]) < args$distance, abs(end - vars[i, "end"]) < args$distance, opt1 == vars[i, "opt1"], abs(as.numeric(opt2) - as.numeric(vars[i, "opt2"])) < args$distance, abs(as.numeric(opt3) - as.numeric(vars[i, "opt3"])) < args$distance)
         
     } else{
+        # For more simple events, there is only one chromosome to consider
         
-        match <- unique_vars %>% filter(type == vars[i, "type"], chr == vars[i, "chr"], abs(start - vars[i, "start"]) < 100, abs(end - vars[i, "end"]) < 100)
+        match <- unique_vars %>% filter(type == vars[i, "type"], chr == vars[i, "chr"], abs(start - vars[i, "start"]) < args$distance, abs(end - vars[i, "end"]) < args$distance)
         
     }
     if (nrow(match) == 0) {
