@@ -112,20 +112,34 @@ if PAIRED:
 if len(SAMPLES) == 0:
 	sys.exit("ERROR: no samples in base directory!")
 
-# motif_counter.sh sometimes gives an error even if it worked. Check to see if telomeres.txt file looks good and remove the telomere recombination step if so
+# motif_counter.sh sometimes gives an error even if it worked. Check to see if telomeres.txt file looks good and that all the discordant read files are there. Remove the telomere recombination step if so.
 
 if "telomere_recombination" in OPTIONS_LIST and os.path.isfile("./telomeres.txt"):
 	with open("telomeres.txt") as f:
 		telo_lines = sum(1 for _ in f)
 
 	if telo_lines > len(SAMPLES):
-		print("\nNot running telomere counting step as telomeres.txt is complete\n")
-		OPTIONS_LIST.remove("telomere_recombination")
+
+		# output file is present and complete. Check telomere mate files
+
+		telo_mate_files = glob.glob("telomeres/*_telomere_mates.bg")
+
+		if len(telo_mate_files) == len(SAMPLES):
+			print("\nNot running telomere counting step as telomeres.txt is complete and discordant read files are present\n")
+			OPTIONS_LIST.remove("telomere_recombination")
 	else:
+
+		# output file is present but incomplete
+
 		print("\ntelomeres.txt is present but incomplete so file will be removed\n")
 		os.remove("telomeres.txt")
 		if os.path.isfile("telomeres.txt.temp"):
 			os.remove("telomeres.txt.temp")
+
+		temp_files=glob.glob("*PET.sam") + glob.glob("telomeres_BAM_FILES/*")
+		if len(temp_files) > 0:
+			for i in temp_files:
+				os.remove(i)
 
 # Identify target output file(s)
 output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres.txt.temp", "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt"}
@@ -821,7 +835,8 @@ if "telomere_recombination" in OPTIONS_LIST:
 			bamidxs = expand("mrkdp/{sample}.bam.bai", sample = SAMPLES)
 		output:
 			# motif_counter.sh sometimes gives error for no good reason. Using a dummy output file prevents snakemake from removing the real output file.
-			"telomeres.txt.temp"
+			temp_file = "telomeres.txt.temp",
+			bamfiles = expand("telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam", sample = SAMPLES)
 		params:
 			telomere_seq = TELOMERE_SEQ,
 			count = TELOMERE_COUNT
@@ -832,3 +847,20 @@ if "telomere_recombination" in OPTIONS_LIST:
 			"if [[ -f telomeres.txt ]]; then rm telomeres.txt; fi; "
 			"touch telomeres.txt.temp; "
 			'printf "{params.telomere_seq}\n{params.count}\n" | bash ~/local/motif_counter.sh -i ./bam -o telomeres -q 0 -Q 0 -p -u -v 2> {log}'
+
+	rule telomere_mates_bg:
+		input:
+			"telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam"
+		output:
+			"telomeres/{sample}_telomere_mates.bg"
+		log:
+			"logs/{sample}_telomere_mates_bg.log"
+		params:
+			sample = "{sample}"
+		log:
+			"logs/{sample}_telomere_mates_bg.log"
+		shell:
+			"module load samtools bedtools && \
+			samtools sort -o telomeres/{params.sample}.bam {input} && \
+			samtools index telomeres/{params.sample}.bam && \
+			bedtools genomecov -ibam telomeres/{params.sample}.bam -bg > {output} 2> {log}"
