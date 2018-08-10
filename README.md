@@ -1,6 +1,6 @@
 # Comprehensive variant calling pipeline for model organisms
 
-This pipeline consists of:
+This is a Snakemake pipeline for WGS data processing and analysis. The pipeline was designed to run on the LongLeaf cluster at UNC Chapel Hill, but can easily be configured to run on other clusters. Job submission and parallelization is handled by Snakemake. The following steps can be performed:
 
 * fastq processing with bbduk.sh
 * Read mapping with BWA-mem
@@ -43,3 +43,18 @@ perl v5.18.2
 python v3.5.1
 python v2.7.14
 motif_counter.sh 2012-10-25 release
+
+## Usage
+
+After downloading the script, check all the parameter variables in the call_variants.Snakefile (these are in capital letters and are found towards the beginning of the file). Whenever you run a pipeline, you can use the setup_dir.sh script in the utils directory to copy the snakefile into your working directory and create a SLURM-ready bash script for running the job (run_snakemake.sh).
+
+```bash
+# Set up working directory
+bash setup_dir.sh -s <directory containing call_variants.Snakefile> -d <working directory (default: current directory)>
+
+# Run pipeline
+bash run_snakemake.sh
+
+# Alternatively, send the run_snakemake.sh job itself to the cluster
+sbatch run_snakemake.sh
+```

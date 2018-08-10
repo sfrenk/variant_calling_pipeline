@@ -34,15 +34,16 @@ PROJECT_NAME = "wt_ctrl"
 #	CNV
 #	repeat_copy_number
 #	transposons
+#	coverage
 #	telomere_recombination
+#	subtelomere_recombination
 
-OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants_svaba", "structural_variants_meerkat", "CNV", "repeat_copy_number", "transposons", "telomere_recombination"]
+OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants_svaba", "structural_variants_meerkat", "CNV", "repeat_copy_number", "transposons", "telomere_recombination", "subtelomere_recombination"]
 
 ############################	VARIABLES	################################
 
 # Directory containing utilities for this pipeline
 UTILS_DIR = "/nas/longleaf/home/sfrenk/pipelines/variant_calling"
-
 
 #### Mapping and SNPs/indels ####
 
@@ -91,12 +92,14 @@ JITTERBUG_PAIRED = 2
 # Soft-clipped support required
 JITTERBUG_SOFT = 1
 
-#### Recombination ####
+#### Telomere counts/ recombination ####
 
 # Telomere sequence
 TELOMERE_SEQ = "TTAGGC"
 # Minimum number of telomere repeats required
-TELOMERE_COUNT = 6
+TELOMERE_COUNT = 7
+# Subtelomere bed file
+SUBTELO_BED = UTILS_DIR + "/telomeres_2kb_subtelo.bed"
 
 
 ###############################################################################
@@ -142,7 +145,7 @@ if "telomere_recombination" in OPTIONS_LIST and os.path.isfile("./telomeres.txt"
 				os.remove(i)
 
 # Identify target output file(s)
-output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres.txt.temp", "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt"}
+output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres/telomere_mates.txt.temp", "subtelomere_recombination" : expand("subtelomeres/{sample}_subtelomere_mates.bg", sample = SAMPLES), "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt"}
 
 
 rule all:
@@ -835,8 +838,7 @@ if "telomere_recombination" in OPTIONS_LIST:
 			bamidxs = expand("mrkdp/{sample}.bam.bai", sample = SAMPLES)
 		output:
 			# motif_counter.sh sometimes gives error for no good reason. Using a dummy output file prevents snakemake from removing the real output file.
-			temp_file = "telomeres.txt.temp",
-			bamfiles = expand("telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam", sample = SAMPLES)
+			"telomeres.txt.temp"
 		params:
 			telomere_seq = TELOMERE_SEQ,
 			count = TELOMERE_COUNT
@@ -850,17 +852,29 @@ if "telomere_recombination" in OPTIONS_LIST:
 
 	rule telomere_mates_bg:
 		input:
-			"telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam"
+			"telomeres.txt.temp"
 		output:
-			"telomeres/{sample}_telomere_mates.bg"
-		log:
-			"logs/{sample}_telomere_mates_bg.log"
+			"telomeres/telomere_mates.txt.temp"
 		params:
-			sample = "{sample}"
+			utils_dir = UTILS_DIR
 		log:
-			"logs/{sample}_telomere_mates_bg.log"
+			"logs/telomere_mates_bg.log"
 		shell:
-			"module load samtools bedtools && \
-			samtools sort -o telomeres/{params.sample}.bam {input} && \
-			samtools index telomeres/{params.sample}.bam && \
-			bedtools genomecov -ibam telomeres/{params.sample}.bam -bg > {output} 2> {log}"
+			"module load samtools bedtools; "
+			"bash {params.utils_dir}/telomere_mates_bg.sh &> {log}"
+
+if "subtelomere_recombination" in OPTIONS_LIST:
+	rule subtelomere_mates:
+		input:
+			"mrkdp/{sample}.bam"
+		output:
+			"subtelomeres/{sample}_subtelomere_mates.bg"
+		params:
+			utils_dir = UTILS_DIR,
+			output_base = "subtelomeres/{sample}_subtelomere_mates",
+			subtelo_bed = SUBTELO_BED
+		log:
+			"logs/{sample}_subtelomere_mates.log"
+		shell:
+			"module load samtools bedtools python; "
+			"python3 {params.utils_dir}/subtelomere_mates.py -o {params.output_base} -b {params.subtelo_bed} {input} &> {log}"
