@@ -7,15 +7,9 @@ import os
 
 # Call Variants using GATK
 
-# Required modules:
-#	python bbmap bwa samtools gatk picard vcftools r perl bedtools
-
-
 ##########################	NOTES	########################################
 
 # Use setup_dir.sh -d <directory_name> -p gatk to set up the working directory
-
-# Base recalibration is currently not supported, so keep BASE_RECALIBRATION = False. I need to get a vcf file of known mutations in our lab strains.
 
 ############################    PARAMETERS    ##############################
 
@@ -38,7 +32,7 @@ PROJECT_NAME = "wt_ctrl"
 #	telomere_recombination
 #	subtelomere_recombination
 
-OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants_svaba", "structural_variants_meerkat", "CNV", "repeat_copy_number", "transposons", "telomere_recombination", "subtelomere_recombination"]
+OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants_svaba", "structural_variants_meerkat", "CNV", "repeat_copy_number", "transposons", "telomere_recombination", "subtelomere_recombination", "telomere_variants"]
 
 ############################	VARIABLES	################################
 
@@ -101,6 +95,8 @@ TELOMERE_COUNT = 7
 # Subtelomere bed file
 SUBTELO_BED = UTILS_DIR + "/telomeres_2kb_subtelo.bed"
 
+# k-seek folder
+KSEEK_DIR = "/nas/longleaf/home/sfrenk/local/k-seek"
 
 ###############################################################################
 
@@ -115,37 +111,8 @@ if PAIRED:
 if len(SAMPLES) == 0:
 	sys.exit("ERROR: no samples in base directory!")
 
-# motif_counter.sh sometimes gives an error even if it worked. Check to see if telomeres.txt file looks good and that all the discordant read files are there. Remove the telomere recombination step if so.
-
-if "telomere_recombination" in OPTIONS_LIST and os.path.isfile("./telomeres.txt"):
-	with open("telomeres.txt") as f:
-		telo_lines = sum(1 for _ in f)
-
-	if telo_lines > len(SAMPLES):
-
-		# output file is present and complete. Check telomere mate files
-
-		telo_mate_files = glob.glob("telomeres/*_telomere_mates.bg")
-
-		if len(telo_mate_files) == len(SAMPLES):
-			print("\nNot running telomere counting step as telomeres.txt is complete and discordant read files are present\n")
-			OPTIONS_LIST.remove("telomere_recombination")
-	else:
-
-		# output file is present but incomplete
-
-		print("\ntelomeres.txt is present but incomplete so file will be removed\n")
-		os.remove("telomeres.txt")
-		if os.path.isfile("telomeres.txt.temp"):
-			os.remove("telomeres.txt.temp")
-
-		temp_files=glob.glob("*PET.sam") + glob.glob("telomeres_BAM_FILES/*")
-		if len(temp_files) > 0:
-			for i in temp_files:
-				os.remove(i)
-
 # Identify target output file(s)
-output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres/telomere_mates.txt.temp", "subtelomere_recombination" : expand("subtelomeres/{sample}_subtelomere_mates.bg", sample = SAMPLES), "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt"}
+output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres/telomere_mates.txt.temp", "subtelomere_recombination" : expand("subtelomeres/{sample}_summary.txt", sample = SAMPLES), "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt", "telomere_variants" : expand("telomere_variants/{sample}.txt", sample = SAMPLES)}
 
 
 rule all:
@@ -189,7 +156,7 @@ if PAIRED:
 			"logs/{sample}_map.log"
 		shell:
 			"module add bwa; "
-			"bwa mem -t {threads} -R '@RG\tID:{params.name}\tSM:{params.name}\tPL:ILLUMINA' {params.idx} {input.trimmed1} {input.trimmed2} > {output} 2> {log}"
+			"bwa mem -t {threads} -R '@RG\\tID:{params.name}\\tSM:{params.name}\\tPL:ILLUMINA' {params.idx} {input.trimmed1} {input.trimmed2} > {output} 2> {log}"
 
 else:
 	rule trim:
@@ -219,7 +186,7 @@ else:
 		threads: 8
 		shell:
 			"module add bwa; "
-			"bwa mem -t {threads} -R '@RG\tID:{params.name}\tSM:{params.name}\tPL:ILLUMINA' {params.idx} {input} > {output} 2> {log}"
+			"bwa mem -t {threads} -R '@RG\\tID:{params.name}\\tSM:{params.name}\\tPL:ILLUMINA' {params.idx} {input} > {output} 2> {log}"
 
 rule convert_to_bam:
 	input:
@@ -758,7 +725,7 @@ if "repeat_copy_number" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_copy_number.log"
 		shell:
-			"module add python; "
+			"module add python samtools; "
 			"python3 {params.utils_dir}/calculate_repeat_copy_number.py -g {params.repeats_gtf} -l -o {output} {input.bamfile} 2> {log}"
 
 #### Transposons ####
@@ -838,7 +805,8 @@ if "telomere_recombination" in OPTIONS_LIST:
 			bamidxs = expand("mrkdp/{sample}.bam.bai", sample = SAMPLES)
 		output:
 			# motif_counter.sh sometimes gives error for no good reason. Using a dummy output file prevents snakemake from removing the real output file.
-			"telomeres.txt.temp"
+			counts_file = "telomeres.txt",
+			bamfiles = expand("telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam", sample = SAMPLES),
 		params:
 			telomere_seq = TELOMERE_SEQ,
 			count = TELOMERE_COUNT
@@ -846,13 +814,25 @@ if "telomere_recombination" in OPTIONS_LIST:
 			"logs/telomere_counts.log"
 		shell:
 			"module load samtools; "
-			"if [[ -f telomeres.txt ]]; then rm telomeres.txt; fi; "
-			"touch telomeres.txt.temp; "
-			'printf "{params.telomere_seq}\n{params.count}\n" | bash ~/local/motif_counter.sh -i ./bam -o telomeres -q 0 -Q 0 -p -u -v 2> {log}'
+			'printf "{params.telomere_seq}\n{params.count}\n" | bash ~/local/motif_counter.sh -i ./mrkdp -o telomeres -q 0 -Q 0 -p -u -v 2> {log} || true'
+
+	rule sort_and_index_telomere_bam:
+		input:
+			"telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam"
+		output:
+			bamfile = "telomeres_BAM_FILES/telomeres_{sample}.sorted.bam",
+			bamidx = "telomeres_BAM_FILES/telomeres_{sample}.sorted.bam.bai"
+		log:
+			"logs/{sample}_sort_and_index_telomere_bam.log"
+		shell:
+			"module add samtools; "
+			"samtools sort -o {output.bamfile} {input} && samtools index {output.bamfile}"
 
 	rule telomere_mates_bg:
 		input:
-			"telomeres.txt.temp"
+			counts_file = "telomeres.txt",
+			bamfiles = expand("telomeres_BAM_FILES/telomeres_{sample}.sorted.bam", sample = SAMPLES),
+			bamidxs = expand("telomeres_BAM_FILES/telomeres_{sample}.sorted.bam.bai", sample = SAMPLES)
 		output:
 			"telomeres/telomere_mates.txt.temp"
 		params:
@@ -866,15 +846,31 @@ if "telomere_recombination" in OPTIONS_LIST:
 if "subtelomere_recombination" in OPTIONS_LIST:
 	rule subtelomere_mates:
 		input:
-			"mrkdp/{sample}.bam"
+			bamfile = "mrkdp/{sample}.bam",
+			bamidx = "mrkdp/{sample}.bam.bai"
 		output:
-			"subtelomeres/{sample}_subtelomere_mates.bg"
+			"subtelomeres/{sample}_summary.txt"
 		params:
 			utils_dir = UTILS_DIR,
-			output_base = "subtelomeres/{sample}_subtelomere_mates",
+			output_base = "subtelomeres/{sample}",
 			subtelo_bed = SUBTELO_BED
 		log:
 			"logs/{sample}_subtelomere_mates.log"
 		shell:
 			"module load samtools bedtools python; "
-			"python3 {params.utils_dir}/subtelomere_mates.py -o {params.output_base} -b {params.subtelo_bed} {input} &> {log}"
+			"python3 {params.utils_dir}/subtelomere_mates.py -o {params.output_base} -b {params.subtelo_bed} {input.bamfile} &> {log}"
+
+if "telomere_variants" in OPTIONS_LIST:
+	rule telomere_variants:
+		input:
+			bamfile = "telomeres_BAM_FILES/telomeres_{sample}.sorted.bam",
+			bamidx = "telomeres_BAM_FILES/telomeres_{sample}.sorted.bam.bai"
+		output:
+			"telomere_variants/{sample}.txt"
+		params:
+			utils_dir = UTILS_DIR
+		log:
+			"logs/{sample}_telomere_variants.log"
+		shell:
+			"module load python; "
+			"python3 {params.utils_dir}/telomere_variants.py -o {output} {input.bamfile} &> {log}"
