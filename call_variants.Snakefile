@@ -305,8 +305,9 @@ if PAIRED:
 		log:
 			"logs/multiqc.log"
 		shell:
-			"module add python/2.7.12; "
-			"multiqc -f . &> {log}"
+			"module purge; "
+			"module add multiqc; "
+			"multiqc -f metrics &> {log}"
 else:
 	rule multiqc:
 		input:
@@ -318,8 +319,9 @@ else:
 		log:
 			"logs/multiqc.log"
 		shell:
-			"module add python/2.7.12; "
-			"multiqc -f . &> {log}"
+			"module purge; "
+			"module add multiqc; "
+			"multiqc -f metrics &> {log}"
 
 #### Coverage ####
 
