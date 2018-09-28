@@ -17,11 +17,20 @@ import os
 BASEDIR = "/proj/ahmedlab/steve/seq/seq_data/trt1_polq1_rtel1_021218/"
 EXTENSION = ".fastq.gz"
 PAIRED = True
-PROJECT_NAME = "wt_ctrl"
+PROJECT_NAME = "cohort"
+
+# The final list of variants must be filtered to remove false positives.
+# There are two ways of doing this with C. elegans: 
+# "hard" : use hard filters
+# "bootstrap" : use highest scoring variants as a truth set for GATK's
+#				machine learning-based filtering method.
+# hard method works better when fewer samples (<10) are available
+FITLER_METHOD = "hard"
 
 # Remove items from the list below if you do not want the corresponding analysis to be performed.
 
 # Options:
+#	QC
 #	snps_indels
 #	structural_variants_svaba
 #	structural_variants_meerkat (Useful for variants with single breakpoints eg. telomere recombination events)
@@ -32,7 +41,7 @@ PROJECT_NAME = "wt_ctrl"
 #	telomere_recombination
 #	subtelomere_recombination
 
-OPTIONS_LIST = ["coverage", "snps_indels", "structural_variants_svaba", "structural_variants_meerkat", "CNV", "repeat_copy_number", "transposons", "telomere_recombination", "subtelomere_recombination", "telomere_variants"]
+OPTIONS_LIST = ["QC", "coverage", "snps_indels", "structural_variants_svaba", "CNV", "repeat_copy_number", "transposons", "telomere_recombination", "subtelomere_recombination", "telomere_variants"]
 
 ############################	VARIABLES	################################
 
@@ -95,8 +104,8 @@ TELOMERE_COUNT = 7
 # Subtelomere bed file
 SUBTELO_BED = UTILS_DIR + "/telomeres_2kb_subtelo.bed"
 
-# k-seek folder
-KSEEK_DIR = "/nas/longleaf/home/sfrenk/local/k-seek"
+# motif_counter.sh location
+MOTIF_COUNTER = "~/local/motif_counter.sh"
 
 ###############################################################################
 
@@ -112,7 +121,7 @@ if len(SAMPLES) == 0:
 	sys.exit("ERROR: no samples in base directory!")
 
 # Identify target output file(s)
-output_files = {"coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres/telomere_mates.txt.temp", "subtelomere_recombination" : expand("subtelomeres/{sample}_summary.txt", sample = SAMPLES), "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt", "telomere_variants" : expand("telomere_variants/{sample}.txt", sample = SAMPLES)}
+output_files = {"QC" : "multiqc_report.html", "coverage" : expand("coverage/{sample}_coverage.txt.gz", sample = SAMPLES), "snps_indels" : "final/" + PROJECT_NAME + ".variants.ano.vcf", "structural_variants_svaba" : "svaba/" + PROJECT_NAME + ".log", "structural_variants_meerkat" : "meerkat/" + PROJECT_NAME + ".structural.meerkat.txt", "repeat_copy_number" : expand("repeats/{sample}_repeats.txt", sample = SAMPLES), "transposons" : "final/" + PROJECT_NAME + ".transposons.txt", "telomere_recombination" : "telomeres/telomere_mates.txt.temp", "subtelomere_recombination" : expand("subtelomeres/{sample}_summary.txt", sample = SAMPLES), "CNV" : "cnv/" + PROJECT_NAME + ".cnv.txt", "telomere_variants" : expand("telomere_variants/{sample}.txt", sample = SAMPLES)}
 
 
 rule all:
@@ -124,6 +133,7 @@ rule all:
 #### Trimming and mapping reads ####
 
 if PAIRED:
+
 	rule trim:
 		input:
 			read1 = BASEDIR + "/{sample}_1" + EXTENSION,
@@ -139,6 +149,22 @@ if PAIRED:
 		shell:
 			"module add bbmap; "
 			"bbduk.sh -Xmx4g -ignorebadquality in1={input.read1} in2={input.read2} out1={output.out1} out2={output.out2} ref={params.adapter_file} ktrim=r overwrite=true k=23 maq=20 mink=11 hdist=1 > {log} 2>&1"
+
+	rule fastqc:
+		input:
+			read1 = "trimmed/{sample}_1.fastq",
+			read2 = "trimmed/{sample}_2.fastq"
+		output:
+			html1 = "metrics/fastq/{sample}_1_fastqc.html",
+			html2 = "metrics/fastq/{sample}_2_fastqc.html",
+			zip1 = "metrics/fastq/{sample}_1_fastqc.zip",
+			zip2 = "metrics/fastq/{sample}_2_fastqc.zip"
+		threads: 4
+		log:
+			"logs/{sample}_fastqc.log"
+		shell:
+			"module add fastqc; "
+			"fastqc -o metrics/fastq {input.read1} {input.read2} &> {log}"
 
 	rule bwa_mapping:
 		input:
@@ -172,6 +198,19 @@ else:
 		shell:
 			"module add bbmap; "
 			"bbduk.sh -Xmx4g -ignorebadquality in={input} out={output} ref={params.adapter_file} ktrim=r overwrite=true k=23 maq=20 mink=11 hdist=1 > {log} 2>&1"
+
+	rule fastqc:
+		input:
+			"trimmed/{sample}.fastq"
+		output:
+			html = "metrics/fastq/{sample}_fastqc.html",
+			zipfile = "metrics/fastq/{sample}_fastqc.zip"
+		threads: 4
+		log:
+			"logs/{sample}_fastqc.log"
+		shell:
+			"module add fastqc; "
+			"fastqc -o metrics/fastq {input} &> {log}"
 
 	rule bwa_mapping:
 		input:
@@ -212,6 +251,19 @@ rule index_bam:
 		"module add samtools; "
 		"samtools index {input}"
 
+rule bam_metrics:
+	input:
+		bamfile = "bam/{sample}.bam",
+		bamidx = "bam/{sample}.bam.bai"
+	output:
+		"metrics/bam/{sample}/qualimapReport.html"
+	params:
+		output_dir="metrics/bam/{sample}"
+	log:
+		"logs/{sample}_bam_metrics.log"
+	shell:
+		"module add qualimap; "
+		"qualimap bamqc -bam {input.bamfile} -outdir {params.output_dir} -gd HUMAN &> {log}"
 
 #### Processing bam files ####
 
@@ -221,7 +273,7 @@ rule mark_duplicates:
 		bamidx = "bam/{sample}.bam.bai"
 	output:
 		bam_out = "mrkdp/{sample}.bam",
-		metrics = "mrkdp/{sample}_metrics.txt"
+		metrics = "metrics/picard/{sample}_metrics.txt"
 	params:
 		picard = PICARD
 	log:
@@ -239,6 +291,35 @@ rule index_mrkdp_bam:
 		"module add samtools; "
 		"samtools index {input}"
 
+#### QC compilation ###
+
+if PAIRED:
+	rule multiqc:
+		input:
+			fastq1 = expand("metrics/fastq/{sample}_1_fastqc.html", sample = SAMPLES),
+			fastq2 = expand("metrics/fastq/{sample}_2_fastqc.html", sample = SAMPLES),
+			bam = expand("metrics/bam/{sample}/qualimapReport.html", sample = SAMPLES),
+			picard = expand("metrics/picard/{sample}_metrics.txt", sample = SAMPLES)
+		output:
+			"multiqc_report.html"
+		log:
+			"logs/multiqc.log"
+		shell:
+			"module add python/2.7.12; "
+			"multiqc -f . &> {log}"
+else:
+	rule multiqc:
+		input:
+			fastq = expand("metrics/fastq/{sample}_fastqc.html", sample = SAMPLES),
+			bam = expand("metrics/bam/{sample}/qualimapReport.html", sample = SAMPLES),
+			picard = expand("metrics/picard/{sample}_metrics.txt", sample = SAMPLES)
+		output:
+			"multiqc_report.html"
+		log:
+			"logs/multiqc.log"
+		shell:
+			"module add python/2.7.12; "
+			"multiqc -f . &> {log}"
 
 #### Coverage ####
 
@@ -421,97 +502,159 @@ rule genotype_gvcfs_second_round:
 
 
 #### Variant filtering ####
-# The variant set has been called, but must now be filtered to get rid of false positives. With human data, this is achieved using a validation set of known variants (eg dbSNP), which is used to train the machine learning algorithm in VariantRecalibrator. Such data doesn't exist for C elegans, so need to bootstrap high-confidence variants form the set of called variants itself. In this pipeline, the top 10% highest quality variants are taken as the validation set.
+# The variant set has been called, but must now be filtered to get rid of false positives. With human data, this is achieved using a validation set of known variants (eg dbSNP), which is used to train the machine learning algorithm in VariantRecalibrator. Such data doesn't exist for C elegans, so need to either set hard variables or bootstrap high-confidence variants form the set of called variants itself. In this pipeline, the top 10% highest quality variants are taken as the validation set for the bootstrap method.
 
-rule get_snp_training_set:
-	input:
-		"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
-	output:
-		snps_training_file = "recal/training_snps.vcf",
-	log:
-		"logs/get_snp_training_set.log"
-	params:
-		utils_dir = UTILS_DIR
-	shell:
-		"module add vcftools picard; "
-		"bash {params.utils_dir}/sample_vcf.sh -v {input} -o {output} 2> {log}"
+if FITLER_METHOD == "hard":
 
-rule get_indel_training_set:
-	input:
-		"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
-	output:
-		snps_training_file = "recal/training_indels.vcf",
-	log:
-		"logs/get_indel_training_set.log"
-	shell:
-		"module add vcftools picard; "
-		"sample_vcf -t indel -v {input} -o {output} 2> {log}"
+	# Filter parameters are taken from the Cook et al. 2016 pot-2 Genetics paper
 
-rule recal_snps:
-	input:
-		gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
-		training_set = "recal/training_snps.vcf"
-	output:
-		recal_file = "recal/snps.recal",
-		tranches_file = "recal/snps.tranche",
-		plots_file = "recal/snps.plots"
-	params:
-		ref = REF
-	threads:
-		8
-	log:
-		"logs/snp_recal.log"
-	shell:
-		"module add gatk; "
-		"gatk -T VariantRecalibrator -nt {threads} -R {params.ref} -U ALLOW_SEQ_DICT_INCOMPATIBILITY --maxGaussians 4 -input {input.gvcf} -an QD -an DP -an FS -an MQRankSum -an ReadPosRankSum -mode SNP -resource:highscoreset,known=true,training=true,truth=true,prior=10.0 {input.training_set} -recalFile {output.recal_file} -tranchesFile {output.tranches_file} -rscriptFile {output.plots_file} 2> {log}"
+	rule extract_snps:
+		input:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
+		output:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.snps.vcf"
+		params:
+			ref = REF
+		log:
+			"logs/extract_snps.log"
+		shell:
+			"module add gatk; "
+			"gatk -T SelectVariants -R {params.ref} -V {input} -selectType SNP -o {output} &> {log}"
 
-rule recal_indels:
-	input:
-		gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
-		training_set = "recal/training_indels.vcf"
-	output:
-		recal_file = "recal/indels.recal",
-		tranches_file = "recal/indels.tranche",
-		plots_file = "recal/indels.plots"
-	params:
-		ref = REF
-	threads:
-		8
-	log:
-		"logs/indel_recal.log"
-	shell:
-		"module add gatk; "
-		"gatk -T VariantRecalibrator -nt {threads} -R {params.ref} --maxGaussians 4 -U ALLOW_SEQ_DICT_INCOMPATIBILITY -input {input.gvcf} -an QD -an DP -an FS -an MQRankSum -an ReadPosRankSum -mode INDEL -resource:highscoreset,known=true,training=true,truth=true,prior=10.0 {input.training_set} -recalFile {output.recal_file} -tranchesFile {output.tranches_file} -rscriptFile {output.plots_file} 2> {log}"
 
-rule apply_snp_recal:
-	input:
-		gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
-		recal_file = "recal/snps.recal",
-		tranches_file = "recal/snps.tranche"
-	output:
-		"final/" + PROJECT_NAME + ".snps.vcf"
-	params:
-		ref = REF
-	log:
-		"logs/apply_snp_recal.log"
-	shell:
-		"module add gatk; "
-		"gatk -T ApplyRecalibration -R {params.ref} -input {input.gvcf} -tranchesFile {input.tranches_file} -recalFile {input.recal_file} -mode SNP --ts_filter_level 99.95 -o {output} 2> {log}"
+	rule filter_snps_hard:
+		input:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.snps.vcf"
+		output:
+			"final/" + PROJECT_NAME + ".snps.vcf"
+		params:
+			ref = REF
+		log:
+			"logs/filter_snps_hard.log"
+		shell:
+			"module add gatk; "
+			'gatk -T VariantFiltration -R {params.ref} -o {output} --variant {input} --filterExpression "DP <= 10 || MQ <= 40 || QUAL < 30 || DV/DP < 0.5" --filterName "hard_filter_snp" &> {log}'
 
-rule apply_indel_recal:
-	input:
-		gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
-		recal_file = "recal/indels.recal",
-		tranches_file = "recal/indels.tranche"
-	output:
-		"final/" + PROJECT_NAME + ".indels.vcf"
-	params:
-		ref = REF
-	log:
-		"logs/apply_indel_recal.log"
-	shell:
-		"module add gatk; "
-		"gatk -T ApplyRecalibration -R {params.ref} -input {input.gvcf} -tranchesFile {input.tranches_file} -recalFile {input.recal_file} -mode INDEL --ts_filter_level 95 -o {output} 2> {log}"
+	rule extract_indels:
+		input:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
+		output:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.indels.vcf"
+		params:
+			ref = REF
+		log:
+			"logs/extract_indels.log"
+		shell:
+			"module add gatk; "
+			"gatk -T SelectVariants -R {params.ref} -V {input} -selectType INDEL -o {output} &> {log}"
+
+
+	rule filter_indels_hard:
+		input:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.indels.vcf"
+		output:
+			"final/" + PROJECT_NAME + ".indels.vcf"
+		params:
+			ref = REF
+		log:
+			"logs/filter_indels_hard.log"
+		shell:
+			"module add gatk; "
+			'gatk -T VariantFiltration -R {params.ref} -o {output} --variant {input} --filterExpression "DP <= 10 || MQ <= 40 || QUAL < 30 || DV/DP < 0.5" --filterName hard_filter_indel &> {log}' 
+
+elif FITLER_METHOD == "bootstrap":
+	rule get_snp_training_set:
+		input:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
+		output:
+			snps_training_file = "recal/training_snps.vcf",
+		log:
+			"logs/get_snp_training_set.log"
+		params:
+			utils_dir = UTILS_DIR
+		shell:
+			"module add vcftools picard; "
+			"bash {params.utils_dir}/sample_vcf.sh -v {input} -o {output} 2> {log}"
+
+	rule get_indel_training_set:
+		input:
+			"vcf_2/" + PROJECT_NAME + ".second_pass.vcf"
+		output:
+			snps_training_file = "recal/training_indels.vcf",
+		log:
+			"logs/get_indel_training_set.log"
+		shell:
+			"module add vcftools picard; "
+			"sample_vcf -t indel -v {input} -o {output} 2> {log}"
+
+	rule recal_snps:
+		input:
+			gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
+			training_set = "recal/training_snps.vcf"
+		output:
+			recal_file = "recal/snps.recal",
+			tranches_file = "recal/snps.tranche",
+			plots_file = "recal/snps.plots"
+		params:
+			ref = REF
+		threads:
+			8
+		log:
+			"logs/snp_recal.log"
+		shell:
+			"module add gatk; "
+			"gatk -T VariantRecalibrator -nt {threads} -R {params.ref} -U ALLOW_SEQ_DICT_INCOMPATIBILITY --maxGaussians 4 -input {input.gvcf} -an QD -an DP -an FS -an MQRankSum -an ReadPosRankSum -mode SNP -resource:highscoreset,known=true,training=true,truth=true,prior=10.0 {input.training_set} -recalFile {output.recal_file} -tranchesFile {output.tranches_file} -rscriptFile {output.plots_file} 2> {log}"
+
+	rule recal_indels:
+		input:
+			gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
+			training_set = "recal/training_indels.vcf"
+		output:
+			recal_file = "recal/indels.recal",
+			tranches_file = "recal/indels.tranche",
+			plots_file = "recal/indels.plots"
+		params:
+			ref = REF
+		threads:
+			8
+		log:
+			"logs/indel_recal.log"
+		shell:
+			"module add gatk; "
+			"gatk -T VariantRecalibrator -nt {threads} -R {params.ref} --maxGaussians 4 -U ALLOW_SEQ_DICT_INCOMPATIBILITY -input {input.gvcf} -an QD -an DP -an FS -an MQRankSum -an ReadPosRankSum -mode INDEL -resource:highscoreset,known=true,training=true,truth=true,prior=10.0 {input.training_set} -recalFile {output.recal_file} -tranchesFile {output.tranches_file} -rscriptFile {output.plots_file} 2> {log}"
+
+	rule apply_snp_recal:
+		input:
+			gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
+			recal_file = "recal/snps.recal",
+			tranches_file = "recal/snps.tranche"
+		output:
+			"final/" + PROJECT_NAME + ".snps.vcf"
+		params:
+			ref = REF
+		log:
+			"logs/apply_snp_recal.log"
+		shell:
+			"module add gatk; "
+			"gatk -T ApplyRecalibration -R {params.ref} -input {input.gvcf} -tranchesFile {input.tranches_file} -recalFile {input.recal_file} -mode SNP --ts_filter_level 99.95 -o {output} 2> {log}"
+
+	rule apply_indel_recal:
+		input:
+			gvcf = "vcf_2/" + PROJECT_NAME + ".second_pass.vcf",
+			recal_file = "recal/indels.recal",
+			tranches_file = "recal/indels.tranche"
+		output:
+			"final/" + PROJECT_NAME + ".indels.vcf"
+		params:
+			ref = REF
+		log:
+			"logs/apply_indel_recal.log"
+		shell:
+			"module add gatk; "
+			"gatk -T ApplyRecalibration -R {params.ref} -input {input.gvcf} -tranchesFile {input.tranches_file} -recalFile {input.recal_file} -mode INDEL --ts_filter_level 95 -o {output} 2> {log}"
+
+else:
+	raise Exception("ERROR: FITLER_METHOD must be set to 'hard' or 'bootstrap'")
 
 #### Annotating variants according to their predicted effect ####
 # At this point, I also remove variants that didn't pass the filters. Amongst other things, this will allow the SNPs and indels to be merge at the end.
@@ -746,8 +889,8 @@ if "transposons" in OPTIONS_LIST:
 		log:
 			"logs/{sample}_transposon_insertions.log"
 		shell:
-			"module load python/2.7.14; "
-			"python {params.jitterbug_dir}/jitterbug.py --pre_filter -l {params.sample_name} -n {threads} -o transposons/{params.sample_name}/{params.sample_name} {input.bamfile} {params.transposons_gtf} 2> {log}"
+			"module load python/2.7.14 samtools; "
+			"python {params.jitterbug_dir}/jitterbug.py --pre_filter -l {params.sample_name} -n {threads} -o transposons/{params.sample_name}/{params.sample_name} {input.bamfile} {params.transposons_gtf} &> {log}"
 
 	rule jitterbug_filter:
 		input:
@@ -804,17 +947,17 @@ if "telomere_recombination" in OPTIONS_LIST:
 			bamfiles = expand("mrkdp/{sample}.bam", sample = SAMPLES),
 			bamidxs = expand("mrkdp/{sample}.bam.bai", sample = SAMPLES)
 		output:
-			# motif_counter.sh sometimes gives error for no good reason. Using a dummy output file prevents snakemake from removing the real output file.
 			counts_file = "telomeres.txt",
 			bamfiles = expand("telomeres_BAM_FILES/telomeres_{sample}.bam_q0.bam", sample = SAMPLES),
 		params:
 			telomere_seq = TELOMERE_SEQ,
-			count = TELOMERE_COUNT
+			count = TELOMERE_COUNT,
+			motif_counter = MOTIF_COUNTER
 		log:
 			"logs/telomere_counts.log"
 		shell:
 			"module load samtools; "
-			'printf "{params.telomere_seq}\n{params.count}\n" | bash ~/local/motif_counter.sh -i ./mrkdp -o telomeres -q 0 -Q 0 -p -u -v 2> {log} || true'
+			'printf "{params.telomere_seq}\n{params.count}\n" | bash {params.motif_counter} -i ./mrkdp -o telomeres -q 0 -Q 0 -p -u -v 2> {log} || true'
 
 	rule sort_and_index_telomere_bam:
 		input:
