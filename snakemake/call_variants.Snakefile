@@ -134,13 +134,29 @@ rule all:
 
 if PAIRED:
 
+	rule fastqc_pre_trim:
+		input:
+			read1 = BASEDIR + "/{sample}_1" + EXTENSION,
+			read2 = BASEDIR + "/{sample}_2" + EXTENSION
+		output:
+			html1 = "metrics/fastq/{sample}_1_fastqc.html",
+			html2 = "metrics/fastq/{sample}_2_fastqc.html",
+			zip1 = "metrics/fastq/{sample}_1_fastqc.zip",
+			zip2 = "metrics/fastq/{sample}_2_fastqc.zip"
+		threads: 4
+		log:
+			"logs/{sample}_fastqc_pre_trim.log"
+		shell:
+			"module add fastqc; "
+			"fastqc -o metrics/fastq {input.read1} {input.read2} &> {log}"
+
 	rule trim:
 		input:
 			read1 = BASEDIR + "/{sample}_1" + EXTENSION,
 			read2 = BASEDIR + "/{sample}_2" + EXTENSION
 		output:
-			out1 = "trimmed/{sample}_1.fastq",
-			out2 = "trimmed/{sample}_2.fastq"
+			out1 = "trimmed/{sample}_1_trimmed.fastq",
+			out2 = "trimmed/{sample}_2_trimmed.fastq"
 		params:
 			adapter_file = ADAPTERS
 		threads: 1
@@ -150,26 +166,26 @@ if PAIRED:
 			"module add bbmap; "
 			"bbduk.sh -Xmx4g -ignorebadquality in1={input.read1} in2={input.read2} out1={output.out1} out2={output.out2} ref={params.adapter_file} ktrim=r overwrite=true k=23 maq=20 mink=11 hdist=1 > {log} 2>&1"
 
-	rule fastqc:
+	rule fastqc_post_trim:
 		input:
-			read1 = "trimmed/{sample}_1.fastq",
-			read2 = "trimmed/{sample}_2.fastq"
+			read1 = "trimmed/{sample}_1_trimmed.fastq",
+			read2 = "trimmed/{sample}_2_trimmed.fastq"
 		output:
-			html1 = "metrics/fastq/{sample}_1_fastqc.html",
-			html2 = "metrics/fastq/{sample}_2_fastqc.html",
-			zip1 = "metrics/fastq/{sample}_1_fastqc.zip",
-			zip2 = "metrics/fastq/{sample}_2_fastqc.zip"
+			html1 = "metrics/fastq/{sample}_1_trimmed_fastqc.html",
+			html2 = "metrics/fastq/{sample}_2_trimmed_fastqc.html",
+			zip1 = "metrics/fastq/{sample}_1_trimmed_fastqc.zip",
+			zip2 = "metrics/fastq/{sample}_2_trimmed_fastqc.zip"
 		threads: 4
 		log:
-			"logs/{sample}_fastqc.log"
+			"logs/{sample}_fastqc_post_trim.log"
 		shell:
 			"module add fastqc; "
 			"fastqc -o metrics/fastq {input.read1} {input.read2} &> {log}"
 
 	rule bwa_mapping:
 		input:
-			trimmed1 = "trimmed/{sample}_1.fastq",
-			trimmed2 = "trimmed/{sample}_2.fastq"
+			trimmed1 = "trimmed/{sample}_1_trimmed.fastq",
+			trimmed2 = "trimmed/{sample}_2_trimmed.fastq"
 		output:
 			"bwa_out/{sample}.sam"
 		params:
@@ -185,11 +201,25 @@ if PAIRED:
 			"bwa mem -t {threads} -R '@RG\\tID:{params.name}\\tSM:{params.name}\\tPL:ILLUMINA' {params.idx} {input.trimmed1} {input.trimmed2} > {output} 2> {log}"
 
 else:
+
+	rule fastqc_pre_trim:
+		input:
+			BASEDIR + "/{sample}" + EXTENSION
+		output:
+			html = "metrics/fastq/{sample}_fastqc.html",
+			zipfile = "metrics/fastq/{sample}_fastqc.zip"
+		threads: 4
+		log:
+			"logs/{sample}_fastqc_pre_trim.log"
+		shell:
+			"module add fastqc; "
+			"fastqc -o metrics/fastq {input} &> {log}"
+
 	rule trim:
 		input:
 			BASEDIR + "/{sample}" + EXTENSION
 		output:
-			"trimmed/{sample}.fastq"
+			"trimmed/{sample}_trimmed.fastq"
 		params:
 			adapter_file = ADAPTERS
 		threads: 1
@@ -199,22 +229,22 @@ else:
 			"module add bbmap; "
 			"bbduk.sh -Xmx4g -ignorebadquality in={input} out={output} ref={params.adapter_file} ktrim=r overwrite=true k=23 maq=20 mink=11 hdist=1 > {log} 2>&1"
 
-	rule fastqc:
+	rule fastqc_post_trim:
 		input:
-			"trimmed/{sample}.fastq"
+			"trimmed/{sample}_trimmed.fastq"
 		output:
-			html = "metrics/fastq/{sample}_fastqc.html",
-			zipfile = "metrics/fastq/{sample}_fastqc.zip"
+			html = "metrics/fastq/{sample}_trimmed_fastqc.html",
+			zipfile = "metrics/fastq/{sample}_trimmed_fastqc.zip"
 		threads: 4
 		log:
-			"logs/{sample}_fastqc.log"
+			"logs/{sample}_fastqc_post_trim.log"
 		shell:
 			"module add fastqc; "
 			"fastqc -o metrics/fastq {input} &> {log}"
 
 	rule bwa_mapping:
 		input:
-			"trimmed/{sample}.fastq"
+			"trimmed/{sample}_trimmed.fastq"
 		output:
 			"bwa_out/{sample}.sam"
 		params:
@@ -296,9 +326,11 @@ rule index_mrkdp_bam:
 if PAIRED:
 	rule multiqc:
 		input:
-			fastq1 = expand("metrics/fastq/{sample}_1_fastqc.html", sample = SAMPLES),
-			fastq2 = expand("metrics/fastq/{sample}_2_fastqc.html", sample = SAMPLES),
+			fastq_pre_trim_1 = expand("metrics/fastq/{sample}_1_fastqc.html", sample = SAMPLES),
+			fastq_pre_trim_2 = expand("metrics/fastq/{sample}_2_fastqc.html", sample = SAMPLES),
 			bam = expand("metrics/bam/{sample}/qualimapReport.html", sample = SAMPLES),
+			fastq_post_trim_1 = expand("metrics/fastq/{sample}_1_trimmed_fastqc.html", sample = SAMPLES),
+			fastq_post_trim_2 = expand("metrics/fastq/{sample}_2_trimmed_fastqc.html", sample = SAMPLES),
 			picard = expand("metrics/picard/{sample}_metrics.txt", sample = SAMPLES)
 		output:
 			"multiqc_report.html"
@@ -311,7 +343,8 @@ if PAIRED:
 else:
 	rule multiqc:
 		input:
-			fastq = expand("metrics/fastq/{sample}_fastqc.html", sample = SAMPLES),
+			fastq_pre_trim = expand("metrics/fastq/{sample}_fastqc.html", sample = SAMPLES),
+			fastq_post_trim = expand("metrics/fastq/{sample}_trimmed_fastqc.html", sample = SAMPLES),
 			bam = expand("metrics/bam/{sample}/qualimapReport.html", sample = SAMPLES),
 			picard = expand("metrics/picard/{sample}_metrics.txt", sample = SAMPLES)
 		output:

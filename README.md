@@ -12,6 +12,7 @@ This is a Snakemake pipeline for WGS data processing and analysis. The pipeline 
 * Identification of novel transposon insertion events with jitterbug
 * Telomere copy number and recombination analysis with motif_counter.sh
 * Telomere repeat variant analysis
+* QC of fastq reads pre and post processing and after mapping with fastqc, bamqc and multiqc
 
 The pipeline is designed to be applied to model organisms, where reference annotation sets for SNPs/indels may not be available.
 
